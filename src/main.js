@@ -1550,10 +1550,6 @@ async function collectOrderIds(page) {
     let pageNumber = 1;
 
     while (true) {
-        /*
-         * Wait for the Order History table to contain
-         * at least one order link.
-         */
         const orderLinks = page.locator(
             'a[href*="/reports/orders/"]',
         );
@@ -1566,40 +1562,45 @@ async function collectOrderIds(page) {
             });
 
 
-        /*
-         * Extract orders on the current page.
-         */
-        const rawOrders = await orderLinks.evaluateAll(
-            (links) => {
-                return links
-                    .map((link) => {
-                        const href = link.href ?? '';
+        const rawOrders =
+            await orderLinks.evaluateAll(
+                (links) => {
+                    return links
+                        .map((link) => {
+                            const href =
+                                link.href ?? '';
 
-                        const match = href.match(
-                            /\/reports\/orders\/(\d+)\/?/,
-                        );
+                            const match =
+                                href.match(
+                                    /\/reports\/orders\/(\d+)\/?/,
+                                );
 
-                        if (!match) {
-                            return null;
-                        }
+                            if (!match) {
+                                return null;
+                            }
 
-                        return {
-                            order_id: match[1],
-                            text:
-                                (link.textContent ?? '')
-                                    .trim(),
-                            url: href,
-                        };
-                    })
-                    .filter(Boolean);
-            },
-        );
+                            return {
+                                order_id:
+                                    match[1],
+
+                                text:
+                                    (
+                                        link.textContent
+                                        ?? ''
+                                    ).trim(),
+
+                                url:
+                                    href,
+                            };
+                        })
+                        .filter(Boolean);
+                },
+            );
 
 
-        /*
-         * Deduplicate orders globally.
-         */
-        for (const order of rawOrders) {
+        for (
+            const order of rawOrders
+        ) {
             allOrders.set(
                 order.order_id,
                 order,
@@ -1609,89 +1610,38 @@ async function collectOrderIds(page) {
 
         console.log(
             `Order History page ${pageNumber}: `
-            + `${rawOrders.length} matching links, `
-            + `${allOrders.size} total unique orders so far.`,
+            + `${rawOrders.length} orders found, `
+            + `${allOrders.size} total unique orders.`,
         );
 
 
-        /*
-         * Capture something that identifies the current page.
-         *
-         * We use the first order ID so we can verify that the
-         * table really changed after clicking Next.
-         */
         const currentFirstOrder =
-            rawOrders[0]?.order_id
+            rawOrders[0]
+                ?.order_id
             ?? null;
 
 
         /*
-         * Locate the visible "Next" pagination control.
+         * Revel exposes the Next button as:
          *
-         * Revel's paginator uses the right-chevron character.
+         * <a href="2"
+         *    class="page-link next">
+         *
+         * On the LAST page, this element
+         * does not exist.
          */
-        const nextButton = page
-            .locator(
-                'a:visible, button:visible',
-            )
-            .filter({
-                hasText: /^>$/,
-            })
-            .last();
+        const nextButton =
+            page.locator(
+                '.pagination '
+                + 'a.page-link.next',
+            );
 
 
-        const nextExists =
+        const hasNextPage =
             await nextButton.count() > 0;
 
 
-        if (!nextExists) {
-            console.log(
-                'No Next pagination control found. '
-                + 'Assuming final page.',
-            );
-
-            break;
-        }
-
-
-        /*
-         * Determine whether the Next control is disabled.
-         *
-         * Different Revel builds may mark the button or
-         * its parent as disabled.
-         */
-        const isDisabled =
-            await nextButton.evaluate((element) => {
-                const parent =
-                    element.parentElement;
-
-                const classText =
-                    `${
-                        element.className ?? ''
-                    } ${
-                        parent?.className ?? ''
-                    }`;
-
-                return (
-                    element.hasAttribute(
-                        'disabled',
-                    )
-                    ||
-                    element.getAttribute(
-                        'aria-disabled',
-                    ) === 'true'
-                    ||
-                    /\bdisabled\b/i.test(
-                        classText,
-                    )
-                );
-            })
-            .catch(
-                () => true,
-            );
-
-
-        if (isDisabled) {
+        if (!hasNextPage) {
             console.log(
                 `Reached final Order History page: `
                 + `${pageNumber}`,
@@ -1701,69 +1651,81 @@ async function collectOrderIds(page) {
         }
 
 
-        console.log(
-            `Moving to Order History page `
-            + `${pageNumber + 1}...`,
-        );
-
-
-        /*
-         * Click Next.
-         */
-        await nextButton.click();
-
-
-        /*
-         * Wait until the table changes.
-         *
-         * This is much safer than using a fixed sleep.
-         */
-        await page.waitForFunction(
-            ({
-                previousFirstOrder,
-            }) => {
-                const links = [
-                    ...document.querySelectorAll(
-                        'a[href*="/reports/orders/"]',
-                    ),
-                ];
-
-                const ids = links
-                    .map((link) => {
-                        const match =
-                            link.href.match(
-                                /\/reports\/orders\/(\d+)\/?/,
-                            );
-
-                        return match
-                            ? match[1]
-                            : null;
-                    })
-                    .filter(Boolean);
-
-                if (ids.length === 0) {
-                    return false;
-                }
-
-                return (
-                    ids[0]
-                    !== previousFirstOrder
+        const nextPageHref =
+            await nextButton
+                .first()
+                .getAttribute(
+                    'href',
                 );
-            },
-            {
-                previousFirstOrder:
-                    currentFirstOrder,
-            },
-            {
-                timeout: 60_000,
-                polling: 500,
-            },
+
+
+        console.log(
+            `Moving from Order History page `
+            + `${pageNumber} to page `
+            + `${nextPageHref ?? pageNumber + 1}...`,
         );
 
 
+        await nextButton
+            .first()
+            .click();
+
+
         /*
-         * Small stabilization delay after the table changes.
+         * Wait until the order table actually
+         * changes before continuing.
          */
+        if (currentFirstOrder) {
+            await page.waitForFunction(
+                ({
+                    previousFirstOrder,
+                }) => {
+                    const links = [
+                        ...document
+                            .querySelectorAll(
+                                'a[href*="/reports/orders/"]',
+                            ),
+                    ];
+
+                    const ids = links
+                        .map((link) => {
+                            const match =
+                                link.href.match(
+                                    /\/reports\/orders\/(\d+)\/?/,
+                                );
+
+                            return match
+                                ? match[1]
+                                : null;
+                        })
+                        .filter(Boolean);
+
+                    if (
+                        ids.length === 0
+                    ) {
+                        return false;
+                    }
+
+                    return (
+                        ids[0]
+                        !== previousFirstOrder
+                    );
+                },
+                {
+                    previousFirstOrder:
+                        currentFirstOrder,
+                },
+                {
+                    timeout:
+                        60_000,
+
+                    polling:
+                        500,
+                },
+            );
+        }
+
+
         await page.waitForTimeout(
             500,
         );
