@@ -1,50 +1,82 @@
 {
-    "title": "Revel Order History",
-    "description": "Extract order-level and item-level data from Revel Order History.",
-    "type": "object",
-    "schemaVersion": 1,
-    "properties": {
-      "username": {
-        "title": "Revel Username",
-        "type": "string",
-        "description": "Username used to log into Revel.",
-        "editor": "textfield"
-      },
-      "password": {
-        "title": "Revel Password",
-        "type": "string",
-        "description": "Password used to log into Revel.",
-        "editor": "textfield",
-        "isSecret": true
-      },
-      "store": {
-        "title": "Store",
-        "type": "string",
-        "description": "Revel establishment to extract order history for.",
-        "editor": "textfield",
-        "default": "Leander"
-      },
-      "report_date": {
-        "title": "Report Date",
-        "type": "string",
-        "description": "Business date to extract in MM/DD/YYYY format.",
-        "editor": "textfield",
-        "default": "09/12/2026"
-      },
-      "max_concurrency": {
-        "title": "Maximum Concurrency",
-        "type": "integer",
-        "description": "Maximum number of order detail pages to process concurrently.",
-        "editor": "number",
-        "default": 5,
-        "minimum": 1,
-        "maximum": 10
-      }
+  "title": "Revel Order History",
+  "description": "Extract order-level and item-level data from Revel Order History.",
+  "type": "object",
+  "schemaVersion": 1,
+
+  "properties": {
+    "username": {
+      "title": "Revel Username",
+      "type": "string",
+      "description": "Username used to log into Revel.",
+      "editor": "textfield"
     },
-    "required": [
-      "username",
-      "password",
-      "store",
-      "report_date"
-    ]
-  }
+
+    "password": {
+      "title": "Revel Password",
+      "type": "string",
+      "description": "Password used to log into Revel.",
+      "editor": "textfield",
+      "isSecret": true
+    },
+
+    "store": {
+      "title": "Store",
+      "type": "string",
+      "description": "Revel establishment to extract order history for.",
+      "editor": "select",
+      "default": "Leander",
+      "enum": [
+        "Leander",
+        "Lampasas"
+      ],
+      "enumTitles": [
+        "Leander",
+        "Lampasas"
+      ]
+    },
+
+    "report_date": {
+      "title": "Report Date",
+      "type": "string",
+      "description": "Business date to extract in MM/DD/YYYY format.",
+      "editor": "textfield",
+      "default": "09/12/2026"
+    },
+
+    "start_time": {
+      "title": "Start Time",
+      "type": "string",
+      "description": "Start time for the Order History report in hh:mm AM/PM format.",
+      "editor": "textfield",
+      "default": "12:00 AM"
+    },
+
+    "end_time": {
+      "title": "End Time",
+      "type": "string",
+      "description": "End time for the Order History report in hh:mm AM/PM format.",
+      "editor": "textfield",
+      "default": "11:59 PM"
+    },
+
+    "max_concurrency": {
+      "title": "Maximum Concurrency",
+      "type": "integer",
+      "description": "Maximum number of order detail pages to process concurrently.",
+      "editor": "number",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 10
+    }
+  },
+
+  "required": [
+    "username",
+    "password",
+    "store",
+    "report_date",
+    "start_time",
+    "end_time"
+  ]
+}
