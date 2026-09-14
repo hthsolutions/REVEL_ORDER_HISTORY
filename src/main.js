@@ -69,118 +69,200 @@ function clean(value) {
  * depending on what the Revel login page currently uses.
  */
 async function loginToRevel(page) {
-
     console.log('Navigating to Revel...');
 
     await page.goto(
         ORDER_HISTORY_URL,
         {
             waitUntil: 'domcontentloaded',
-            timeout: 60000,
+            timeout: 60_000,
         },
     );
 
     /*
-     * If we're already authenticated,
-     * Revel may take us straight to Order History.
+     * Check whether we're already authenticated.
      */
     const establishmentHeader = page.locator(
         '[data-cy="header-establishment-text"]',
     );
-    
-    const isLoggedIn =
+
+    const alreadyLoggedIn =
         await establishmentHeader
             .isVisible({
                 timeout: 5000,
             })
             .catch(() => false);
-    
-    if (isLoggedIn) {
+
+    if (alreadyLoggedIn) {
         console.log(
             'Existing authenticated Revel session detected.',
         );
-    
+
         return;
     }
 
     console.log('Logging into Revel...');
 
     /*
-     * Username
-     *
-     * We can tighten these selectors after testing
-     * against your actual login page.
+     * ==========================================
+     * USERNAME
+     * ==========================================
      */
-    const usernameInput = page.locator(
-        'input[name="username"], input[type="email"], input#id_username',
-    ).first();
 
-    await usernameInput.waitFor({
+    const usernameField =
+        page.locator('#username');
+
+    await usernameField.waitFor({
         state: 'visible',
-        timeout: 30000,
+        timeout: 15_000,
     });
 
-    await usernameInput.fill(username);
+    await usernameField.fill(username);
+
+    console.log(
+        'Username entered. Clicking Continue.',
+    );
+
+    const continueButton =
+        page.getByRole(
+            'button',
+            {
+                name: 'Continue',
+                exact: true,
+            },
+        );
+
+    await continueButton.waitFor({
+        state: 'visible',
+        timeout: 15_000,
+    });
+
+    await continueButton.click();
+
 
     /*
-     * Some Revel login flows have a separate
-     * username step.
+     * ==========================================
+     * PASSWORD
+     * ==========================================
      */
-    const continueButton = page.getByRole(
-        'button',
-        {
-            name: /continue|next|sign in|login/i,
-        },
-    ).first();
 
-    if (
-        await continueButton
-            .isVisible()
-            .catch(() => false)
-    ) {
-        await continueButton.click();
+    const passwordField =
+        page.locator(
+            'input[type="password"]',
+        );
 
-        await page.waitForTimeout(1000);
-    }
-
-    const passwordInput = page.locator(
-        'input[name="password"], input[type="password"], input#id_password',
-    ).first();
-
-    await passwordInput.waitFor({
+    await passwordField.waitFor({
         state: 'visible',
-        timeout: 30000,
+        timeout: 20_000,
     });
 
-    await passwordInput.fill(password);
+    console.log(
+        'Password field appeared.',
+    );
 
-    const loginButton = page.getByRole(
-        'button',
-        {
-            name: /login|log in|sign in/i,
-        },
-    ).first();
+    await passwordField.fill(password);
+
+
+    /*
+     * ==========================================
+     * FINAL LOGIN BUTTON
+     * ==========================================
+     *
+     * Revel does not consistently expose this
+     * button with accessible text like "Login".
+     *
+     * This is the selector already proven to work
+     * in your other Revel actors.
+     */
+
+    const loginButton =
+        page.locator(
+            'button[type="submit"]:visible, '
+            + 'input[type="submit"]:visible',
+        ).last();
+
+    await loginButton.waitFor({
+        state: 'visible',
+        timeout: 15_000,
+    });
+
+    const buttonText =
+        (await loginButton.textContent())?.trim()
+        || (await loginButton.getAttribute('value'))
+        || 'Submit';
+
+    console.log(
+        `Clicking final login button: ${buttonText}`,
+    );
 
     await loginButton.click();
+
+
+    /*
+     * Wait for password form to disappear.
+     */
+    await passwordField.waitFor({
+        state: 'hidden',
+        timeout: 30_000,
+    });
 
     await page.waitForLoadState(
         'domcontentloaded',
     );
 
-    await page.waitForTimeout(2000);
-
-    /*
-     * Go explicitly to Order History after authentication.
-     */
-    await page.goto(
-        ORDER_HISTORY_URL,
-        {
-            waitUntil: 'domcontentloaded',
-            timeout: 60000,
-        },
+    console.log(
+        `Login completed. Current URL: ${page.url()}`,
     );
 
-    console.log('Login complete.');
+
+    /*
+     * ==========================================
+     * NAVIGATE BACK TO ORDER HISTORY
+     * ==========================================
+     *
+     * Revel may redirect somewhere else after login.
+     */
+
+    if (
+        !page.url().includes('/reports/orders')
+    ) {
+        console.log(
+            `Navigating to Order History: `
+            + `${ORDER_HISTORY_URL}`,
+        );
+
+        await page.goto(
+            ORDER_HISTORY_URL,
+            {
+                waitUntil: 'domcontentloaded',
+                timeout: 60_000,
+            },
+        );
+    }
+
+
+    /*
+     * ==========================================
+     * FINAL LOGIN VALIDATION
+     * ==========================================
+     */
+
+    await establishmentHeader.waitFor({
+        state: 'visible',
+        timeout: 30_000,
+    });
+
+    const loggedInEstablishment =
+        clean(
+            await establishmentHeader
+                .textContent(),
+        );
+
+    console.log(
+        `Revel login verified. `
+        + `Current establishment: `
+        + `${loggedInEstablishment}`,
+    );
 }
 
 
@@ -1201,6 +1283,8 @@ const crawler =
     new PlaywrightCrawler({
 
         maxRequestsPerCrawl: 1,
+
+        maxRequestRetries: 0,
 
         maxConcurrency: 1,
 
