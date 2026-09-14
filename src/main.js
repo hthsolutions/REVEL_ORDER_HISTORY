@@ -84,10 +84,22 @@ async function loginToRevel(page) {
      * If we're already authenticated,
      * Revel may take us straight to Order History.
      */
-    if (
-        page.url().includes('/reports/orders')
-    ) {
-        console.log('Existing authenticated session detected.');
+    const establishmentHeader = page.locator(
+        '[data-cy="header-establishment-text"]',
+    );
+    
+    const isLoggedIn =
+        await establishmentHeader
+            .isVisible({
+                timeout: 5000,
+            })
+            .catch(() => false);
+    
+    if (isLoggedIn) {
+        console.log(
+            'Existing authenticated Revel session detected.',
+        );
+    
         return;
     }
 
@@ -194,60 +206,89 @@ async function selectEstablishment(
     page,
     targetStore,
 ) {
-
     console.log(
         `Checking establishment: ${targetStore}`,
     );
 
     /*
-     * You may already have a known selector for this
-     * establishment header from the other Revel Actor.
-     *
-     * This intentionally uses text / generic selectors
-     * until we merge your existing known-good selection logic.
+     * Revel's actual establishment header.
      */
-    const establishmentTrigger = page.locator(
-        '[class*="establishment"], [class*="estab"]',
-    ).filter({
-        hasText: /Lampasas|Leander/i,
-    }).first();
-
-    const currentText = clean(
-        await establishmentTrigger
-            .textContent()
-            .catch(() => null),
+    const establishmentText = page.locator(
+        '[data-cy="header-establishment-text"]',
     );
+
+    await establishmentText.waitFor({
+        state: 'visible',
+        timeout: 30_000,
+    });
+
+    const currentEstablishment =
+        clean(
+            await establishmentText.textContent(),
+        );
 
     console.log(
-        `Current establishment header: ${currentText}`,
+        `Current establishment before selection: `
+        + `${currentEstablishment}`,
     );
 
+    /*
+     * If we're already on the correct establishment,
+     * don't open the selector unnecessarily.
+     */
     if (
-        currentText
+        currentEstablishment
             ?.toLowerCase()
-            .includes(targetStore.toLowerCase())
+        === targetStore
+            .toLowerCase()
     ) {
         console.log(
-            `Correct establishment already selected: ${targetStore}`,
+            `Correct establishment already selected: `
+            + `${currentEstablishment}`,
         );
 
         return;
     }
 
+    /*
+     * Open establishment selector.
+     */
     console.log(
         'Opening establishment selector...',
     );
 
-    await establishmentTrigger.click();
+    await establishmentText.click();
 
     /*
-     * Sort by establishment number.
+     * Wait for the establishment selector panel.
+     *
+     * This also confirms that the click actually worked.
      */
-    const estabNumberButton = page.locator(
-        'div.btn.by-id',
-    ).filter({
-        hasText: 'Estab. No.',
-    });
+    const establishmentOption =
+        page.locator(
+            'span.fancytree-title',
+        );
+
+    await establishmentOption
+        .first()
+        .waitFor({
+            state: 'visible',
+            timeout: 30_000,
+        });
+
+    console.log(
+        'Establishment panel opened.',
+    );
+
+    /*
+     * Sort by Establishment Number.
+     */
+    const estabNumberButton =
+        page.locator(
+            'div.btn.by-id',
+        ).filter({
+            hasText: 'Estab. No.',
+        });
 
     if (
         await estabNumberButton
@@ -255,18 +296,25 @@ async function selectEstablishment(
             .catch(() => false)
     ) {
         console.log(
-            'Sorting establishment list by Estab. No.',
+            'Clicking "Estab. No." sort.',
         );
 
         await estabNumberButton.click();
+
+        await page.waitForTimeout(500);
+    } else {
+        console.warn(
+            '"Estab. No." button was not visible.',
+        );
     }
 
     /*
-     * Expand every folder.
+     * Expand all folders.
      */
-    const expandAll = page.locator(
-        'span.expand-all',
-    );
+    const expandAll =
+        page.locator(
+            'span.expand-all',
+        );
 
     if (
         await expandAll
@@ -274,67 +322,138 @@ async function selectEstablishment(
             .catch(() => false)
     ) {
         console.log(
-            'Expanding all establishment folders...',
+            'Clicking "expand all"...',
         );
 
         await expandAll.click();
 
+        /*
+         * Give the fancytree a moment to populate
+         * its nested establishments.
+         */
         await page.waitForTimeout(1000);
+    } else {
+        console.warn(
+            '"expand all" was not visible.',
+        );
     }
 
     /*
-     * Locate target store by visible text.
+     * Find the requested establishment.
+     *
+     * For Leander we know Revel displays:
+     *
+     * 42 | Leander
      */
-    const target = page
-        .getByText(
-            new RegExp(
+    const targetOption =
+        page.locator(
+            'span.fancytree-title',
+        ).filter({
+            hasText: new RegExp(
                 `\\b${targetStore}\\b`,
                 'i',
             ),
-        )
-        .last();
+        });
 
-    await target.waitFor({
-        state: 'visible',
-        timeout: 30000,
-    });
+    const matchCount =
+        await targetOption.count();
 
     console.log(
-        `Selecting establishment: ${targetStore}`,
+        `Matching establishment options found: `
+        + `${matchCount}`,
     );
 
-    await target.click();
-
-    await page.waitForTimeout(1500);
+    if (matchCount === 0) {
+        throw new Error(
+            `Could not find establishment `
+            + `"${targetStore}" after expanding `
+            + `the establishment tree.`,
+        );
+    }
 
     /*
-     * Critical verification.
+     * For extra safety, print the exact option
+     * we're about to click.
      */
-    const verifiedText = clean(
-        await establishmentTrigger
-            .textContent()
-            .catch(() => null),
-    );
+    const optionText =
+        clean(
+            await targetOption
+                .first()
+                .textContent(),
+        );
 
     console.log(
-        `Establishment after selection: ${verifiedText}`,
+        `Selecting establishment option: `
+        + `${optionText}`,
+    );
+
+    await targetOption
+        .first()
+        .click();
+
+    /*
+     * Wait for Revel to update the header.
+     */
+    await page.waitForFunction(
+        ({ selector, expected }) => {
+            const element =
+                document.querySelector(
+                    selector,
+                );
+
+            if (!element) {
+                return false;
+            }
+
+            return element
+                .textContent
+                .trim()
+                .toLowerCase()
+                === expected.toLowerCase();
+        },
+        {
+            selector:
+                '[data-cy="header-establishment-text"]',
+
+            expected:
+                targetStore,
+        },
+        {
+            timeout: 30_000,
+        },
+    );
+
+    /*
+     * Final read-back validation.
+     */
+    const selectedEstablishment =
+        clean(
+            await establishmentText
+                .textContent(),
+        );
+
+    console.log(
+        `Establishment after selection: `
+        + `${selectedEstablishment}`,
     );
 
     if (
-        !verifiedText
+        selectedEstablishment
             ?.toLowerCase()
-            .includes(targetStore.toLowerCase())
+        !== targetStore
+            .toLowerCase()
     ) {
         throw new Error(
             `ESTABLISHMENT VALIDATION FAILED. `
             + `Expected "${targetStore}", `
-            + `but Revel shows "${verifiedText}". `
-            + `Actor stopped to prevent incorrect data attribution.`,
+            + `but Revel shows `
+            + `"${selectedEstablishment}".`,
         );
     }
 
     console.log(
-        `Establishment verified successfully: ${targetStore}`,
+        `Establishment verified successfully: `
+        + `${selectedEstablishment}`,
     );
 }
 
