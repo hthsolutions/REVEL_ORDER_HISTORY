@@ -292,9 +292,6 @@ async function selectEstablishment(
         `Checking establishment: ${targetStore}`,
     );
 
-    /*
-     * Revel's actual establishment header.
-     */
     const establishmentText = page.locator(
         '[data-cy="header-establishment-text"]',
     );
@@ -315,8 +312,7 @@ async function selectEstablishment(
     );
 
     /*
-     * If we're already on the correct establishment,
-     * don't open the selector unnecessarily.
+     * Already on correct establishment.
      */
     if (
         currentEstablishment
@@ -333,7 +329,7 @@ async function selectEstablishment(
     }
 
     /*
-     * Open establishment selector.
+     * Open the establishment selector.
      */
     console.log(
         'Opening establishment selector...',
@@ -341,36 +337,42 @@ async function selectEstablishment(
 
     await establishmentText.click();
 
-    /*
-     * Wait for the establishment selector panel.
-     *
-     * This also confirms that the click actually worked.
-     */
-    const establishmentOption =
-        page.locator(
-            'span.fancytree-title',
-        );
 
-    await establishmentOption
-        .first()
-        .waitFor({
-            state: 'visible',
-            timeout: 30_000,
-        });
+    /*
+     * IMPORTANT:
+     *
+     * Revel can have multiple FancyTree structures
+     * in the DOM, including hidden ones.
+     *
+     * Only work inside the currently visible tree.
+     */
+    const establishmentTree =
+        page.locator(
+            'ul.fancytree-container:visible',
+        ).first();
+
+    await establishmentTree.waitFor({
+        state: 'visible',
+        timeout: 30_000,
+    });
 
     console.log(
         'Establishment panel opened.',
     );
 
+
     /*
-     * Sort by Establishment Number.
+     * ==========================================
+     * SORT BY ESTABLISHMENT NUMBER
+     * ==========================================
      */
+
     const estabNumberButton =
         page.locator(
-            'div.btn.by-id',
+            'div.btn.by-id:visible',
         ).filter({
             hasText: 'Estab. No.',
-        });
+        }).first();
 
     if (
         await estabNumberButton
@@ -390,13 +392,17 @@ async function selectEstablishment(
         );
     }
 
+
     /*
-     * Expand all folders.
+     * ==========================================
+     * EXPAND ALL
+     * ==========================================
      */
+
     const expandAll =
         page.locator(
-            'span.expand-all',
-        );
+            'span.expand-all:visible',
+        ).first();
 
     if (
         await expandAll
@@ -410,107 +416,141 @@ async function selectEstablishment(
         await expandAll.click();
 
         /*
-         * Give the fancytree a moment to populate
-         * its nested establishments.
+         * Allow FancyTree to finish rendering
+         * all child establishments.
          */
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(1500);
     } else {
         console.warn(
             '"expand all" was not visible.',
         );
     }
 
-    /*
-     * Find the requested establishment.
-     *
-     * For Leander we know Revel displays:
-     *
-     * 42 | Leander
-     */
-    const targetOption =
-        page.locator(
-            'span.fancytree-title',
-        ).filter({
-            hasText: new RegExp(
-                `\\b${targetStore}\\b`,
-                'i',
-            ),
-        });
 
-    const matchCount =
-        await targetOption.count();
+    /*
+     * ==========================================
+     * SELECT TARGET STORE
+     * ==========================================
+     *
+     * Restrict search to:
+     *
+     * 1. visible FancyTree
+     * 2. visible titles
+     * 3. store name at end of title
+     *
+     * Matches:
+     *
+     * Leander
+     * 42 | Leander
+     *
+     * But avoids hidden duplicate nodes.
+     */
+
+    const escapedStore =
+        targetStore.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            '\\$&',
+        );
+
+    const storePattern =
+        new RegExp(
+            `(?:^|\\|\\s*)${escapedStore}\\s*$`,
+            'i',
+        );
+
+    const targetOptions =
+        establishmentTree
+            .locator(
+                'span.fancytree-title:visible',
+            )
+            .filter({
+                hasText: storePattern,
+            });
+
+    const visibleMatchCount =
+        await targetOptions.count();
 
     console.log(
-        `Matching establishment options found: `
-        + `${matchCount}`,
+        `Visible matching establishment options found: `
+        + `${visibleMatchCount}`,
     );
 
-    if (matchCount === 0) {
+    if (visibleMatchCount === 0) {
         throw new Error(
-            `Could not find establishment `
+            `Could not find visible establishment `
             + `"${targetStore}" after expanding `
             + `the establishment tree.`,
         );
     }
 
-    /*
-     * For extra safety, print the exact option
-     * we're about to click.
-     */
+    const targetOption =
+        targetOptions.first();
+
+    await targetOption.waitFor({
+        state: 'visible',
+        timeout: 20_000,
+    });
+
     const optionText =
         clean(
-            await targetOption
-                .first()
-                .textContent(),
+            await targetOption.textContent(),
         );
 
     console.log(
-        `Selecting establishment option: `
+        `Selecting visible establishment option: `
         + `${optionText}`,
     );
 
-    await targetOption
-        .first()
-        .click();
 
     /*
-     * Wait for Revel to update the header.
+     * Scroll it into view in case it is inside
+     * a scrollable FancyTree panel.
      */
-    await page.waitForFunction(
-        ({ selector, expected }) => {
-            const element =
-                document.querySelector(
-                    selector,
-                );
+    await targetOption.scrollIntoViewIfNeeded();
 
-            if (!element) {
-                return false;
-            }
+    await targetOption.click();
 
-            return element
-                .textContent
-                .trim()
-                .toLowerCase()
-                === expected.toLowerCase();
-        },
-        {
-            selector:
-                '[data-cy="header-establishment-text"]',
-
-            expected:
-                targetStore,
-        },
-        {
-            timeout: 30_000,
-        },
-    );
 
     /*
-     * Final read-back validation.
+     * ==========================================
+     * WAIT FOR HEADER TO CHANGE
+     * ==========================================
+     *
+     * Use Playwright's locator expectation style
+     * instead of document.querySelector().
+     *
+     * This is safer because the header itself may
+     * be re-rendered by Revel after selection.
      */
+
+    const selectedHeader =
+        page.locator(
+            '[data-cy="header-establishment-text"]',
+        ).filter({
+            hasText: new RegExp(
+                `^\\s*${escapedStore}\\s*$`,
+                'i',
+            ),
+        });
+
+    await selectedHeader.waitFor({
+        state: 'visible',
+        timeout: 30_000,
+    });
+
+
+    /*
+     * ==========================================
+     * FINAL VALIDATION
+     * ==========================================
+     */
+
     const selectedEstablishment =
         clean(
-            await establishmentText
+            await page
+                .locator(
+                    '[data-cy="header-establishment-text"]',
+                )
                 .textContent(),
         );
 
