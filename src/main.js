@@ -596,233 +596,528 @@ async function setReportDate(
     );
 
     /*
-     * Order History exposes dedicated report-filter
-     * fields with IDs date-from and date-to.
+     * Open Revel's visible date-range picker.
      *
-     * Do NOT use:
-     *
-     * input[name="daterangepicker_start"]
-     *
-     * because Revel also creates another internal
-     * daterangepicker input with the same name.
+     * This is the same pattern already used
+     * successfully in your Sales Summary actor.
      */
+    const dateRangeDropdown =
+        page.locator(
+            '.report-date-row .ico-f-to-down',
+        );
 
-    const startDate =
-        page.locator('#date-from');
-
-    const endDate =
-        page.locator('#date-to');
-
-    await startDate.waitFor({
+    await dateRangeDropdown.waitFor({
         state: 'visible',
         timeout: 20_000,
     });
 
-    await endDate.waitFor({
+    console.log(
+        'Opening Order History date-range picker...',
+    );
+
+    await dateRangeDropdown.click();
+
+
+    /*
+     * Confirm that the actual interactive picker
+     * is now visible.
+     */
+    const visibleDatePicker =
+        page.locator(
+            '.daterangepicker:visible',
+        );
+
+    await visibleDatePicker.waitFor({
         state: 'visible',
         timeout: 20_000,
     });
 
-
-    /*
-     * Clear and enter requested date.
-     */
-    await startDate.fill(reportDate);
-
-    await endDate.fill(reportDate);
-
-
     console.log(
-        `Order History date fields entered: `
-        + `${reportDate} through ${reportDate}`,
+        'Order History date-range picker opened.',
     );
 
 
     /*
-     * Read them back before running the report.
+     * Set the date directly through Revel's
+     * daterangepicker instance.
+     *
+     * For this Actor we only need one business date,
+     * so start and end are the same date.
+     *
+     * We intentionally preserve whatever time values
+     * Revel already has configured instead of making
+     * assumptions about the business-day start/end.
      */
-    const startValue =
-        await startDate.inputValue();
+    const pickerResult =
+        await page.evaluate(
+            ({
+                requestedDate,
+            }) => {
 
-    const endValue =
-        await endDate.inputValue();
+                const $ =
+                    window.jQuery;
+
+                const moment =
+                    window.moment;
+
+                if (!$) {
+                    throw new Error(
+                        'jQuery is not available on the Revel page.',
+                    );
+                }
+
+                if (!moment) {
+                    throw new Error(
+                        'Moment.js is not available on the Revel page.',
+                    );
+                }
+
+                /*
+                 * Find every element that owns a
+                 * daterangepicker instance.
+                 */
+                const candidates =
+                    $('*').filter(
+                        function findPicker() {
+                            return Boolean(
+                                $(this)
+                                    .data(
+                                        'daterangepicker',
+                                    ),
+                            );
+                        },
+                    );
+
+                if (
+                    candidates.length === 0
+                ) {
+                    throw new Error(
+                        'Unable to locate Revel '
+                        + 'daterangepicker instance.',
+                    );
+                }
+
+
+                /*
+                 * Prefer the picker whose container
+                 * is currently visible.
+                 */
+                let picker = null;
+
+                candidates.each(
+                    function selectVisiblePicker() {
+
+                        const candidate =
+                            $(this)
+                                .data(
+                                    'daterangepicker',
+                                );
+
+                        if (
+                            !picker
+                            && candidate?.container
+                            && candidate
+                                .container
+                                .is(':visible')
+                        ) {
+                            picker =
+                                candidate;
+                        }
+                    },
+                );
+
+
+                /*
+                 * Fall back only if necessary.
+                 */
+                if (!picker) {
+                    picker =
+                        $(candidates[0])
+                            .data(
+                                'daterangepicker',
+                            );
+                }
+
+
+                if (
+                    !picker?.startDate
+                    || !picker?.endDate
+                ) {
+                    throw new Error(
+                        'Revel daterangepicker '
+                        + 'does not expose start/end dates.',
+                    );
+                }
+
+
+                /*
+                 * Preserve Revel's existing times.
+                 *
+                 * Example:
+                 *
+                 * if Revel currently has:
+                 *
+                 * start = 06:00
+                 * end   = 23:59
+                 *
+                 * we keep those times and only change
+                 * the calendar date.
+                 */
+                const originalStart =
+                    picker.startDate.clone();
+
+                const originalEnd =
+                    picker.endDate.clone();
+
+
+                const requestedStart =
+                    moment(
+                        requestedDate,
+                        'MM/DD/YYYY',
+                        true,
+                    );
+
+                const requestedEnd =
+                    moment(
+                        requestedDate,
+                        'MM/DD/YYYY',
+                        true,
+                    );
+
+
+                if (
+                    !requestedStart.isValid()
+                ) {
+                    throw new Error(
+                        `Invalid requested date: `
+                        + `${requestedDate}`,
+                    );
+                }
+
+
+                /*
+                 * Copy the existing time components.
+                 */
+                requestedStart
+                    .hour(
+                        originalStart.hour(),
+                    )
+                    .minute(
+                        originalStart.minute(),
+                    )
+                    .second(
+                        originalStart.second(),
+                    );
+
+                requestedEnd
+                    .hour(
+                        originalEnd.hour(),
+                    )
+                    .minute(
+                        originalEnd.minute(),
+                    )
+                    .second(
+                        originalEnd.second(),
+                    );
+
+
+                if (
+                    typeof picker
+                        .setStartDate
+                    !== 'function'
+                    ||
+                    typeof picker
+                        .setEndDate
+                    !== 'function'
+                ) {
+                    throw new Error(
+                        'Revel daterangepicker does not '
+                        + 'expose date-setting methods.',
+                    );
+                }
+
+
+                picker.setStartDate(
+                    requestedStart,
+                );
+
+                picker.setEndDate(
+                    requestedEnd,
+                );
+
+
+                /*
+                 * Force Revel's UI controls to update.
+                 */
+                if (
+                    typeof picker.updateView
+                    === 'function'
+                ) {
+                    picker.updateView();
+                }
+
+                if (
+                    typeof picker
+                        .updateCalendars
+                    === 'function'
+                ) {
+                    picker.updateCalendars();
+                }
+
+                if (
+                    typeof picker
+                        .updateFormInputs
+                    === 'function'
+                ) {
+                    picker.updateFormInputs();
+                }
+
+
+                return {
+                    startDate:
+                        picker
+                            .startDate
+                            .format(
+                                'MM/DD/YYYY hh:mm A',
+                            ),
+
+                    endDate:
+                        picker
+                            .endDate
+                            .format(
+                                'MM/DD/YYYY hh:mm A',
+                            ),
+
+                    hasClickApply:
+                        typeof picker
+                            .clickApply
+                        === 'function',
+                };
+            },
+            {
+                requestedDate:
+                    reportDate,
+            },
+        );
+
 
     console.log(
-        `Date field validation: `
-        + `start=${startValue}, `
-        + `end=${endValue}`,
+        `Internal Order History range: `
+        + `${pickerResult.startDate} through `
+        + `${pickerResult.endDate}`,
     );
+
 
     if (
-        startValue !== reportDate
-        || endValue !== reportDate
+        !pickerResult.hasClickApply
     ) {
         throw new Error(
-            `ORDER HISTORY DATE VALIDATION FAILED. `
-            + `Expected ${reportDate} through ${reportDate}, `
-            + `but found ${startValue} through ${endValue}.`,
+            'The Revel daterangepicker does not '
+            + 'expose clickApply().',
         );
     }
 
 
     /*
-     * Revel may require change events for its
-     * report-filter logic to notice the new values.
+     * Apply the date through the picker API.
      */
-    await startDate.evaluate((element) => {
-        element.dispatchEvent(
-            new Event(
-                'change',
-                {
-                    bubbles: true,
+    console.log(
+        'Applying Order History date range...',
+    );
+
+    await page.evaluate(() => {
+
+        const $ =
+            window.jQuery;
+
+        if (!$) {
+            throw new Error(
+                'jQuery is not available during Apply.',
+            );
+        }
+
+        const candidates =
+            $('*').filter(
+                function findPicker() {
+                    return Boolean(
+                        $(this)
+                            .data(
+                                'daterangepicker',
+                            ),
+                    );
                 },
-            ),
-        );
-    });
-
-    await endDate.evaluate((element) => {
-        element.dispatchEvent(
-            new Event(
-                'change',
-                {
-                    bubbles: true,
-                },
-            ),
-        );
-    });
-
-
-    /*
-     * Find the Order History refresh/search/apply
-     * control.
-     *
-     * We can tighten this selector after seeing
-     * what the page exposes, but unlike the date
-     * fields this is intentionally flexible.
-     */
-    const reportButton =
-        page.locator(
-            'button:visible, input[type="submit"]:visible',
-        ).filter({
-            hasText: /search|apply|refresh|update|run/i,
-        }).first();
-
-
-    /*
-     * Buttons implemented as input[type=submit]
-     * don't expose textContent, so check both
-     * button text and value.
-     */
-    let clickedReportButton = false;
-
-    const visibleButtons =
-        page.locator(
-            'button:visible, input[type="submit"]:visible',
-        );
-
-    const buttonCount =
-        await visibleButtons.count();
-
-    for (
-        let i = 0;
-        i < buttonCount;
-        i++
-    ) {
-        const button =
-            visibleButtons.nth(i);
-
-        const text =
-            (
-                await button.textContent()
-                    .catch(() => '')
-            )?.trim()
-            || '';
-
-        const value =
-            (
-                await button.getAttribute('value')
-                    .catch(() => '')
-            )?.trim()
-            || '';
-
-        const label =
-            `${text} ${value}`.trim();
-
-        if (
-            /search|apply|refresh|update|run/i
-                .test(label)
-        ) {
-            console.log(
-                `Running Order History report `
-                + `using button: "${label}"`,
             );
 
-            await button.click();
+        let picker = null;
 
-            clickedReportButton = true;
+        candidates.each(
+            function selectVisiblePicker() {
 
-            break;
-        }
-    }
+                const candidate =
+                    $(this)
+                        .data(
+                            'daterangepicker',
+                        );
 
-
-    if (!clickedReportButton) {
-        /*
-         * Sometimes changing the date itself causes
-         * Revel to refresh, so don't immediately fail.
-         */
-        console.warn(
-            'No Search/Apply/Refresh button was found. '
-            + 'Checking whether Revel refreshed automatically.',
+                if (
+                    !picker
+                    && candidate?.container
+                    && candidate
+                        .container
+                        .is(':visible')
+                ) {
+                    picker =
+                        candidate;
+                }
+            },
         );
-    }
+
+        if (
+            !picker
+            && candidates.length > 0
+        ) {
+            picker =
+                $(candidates[0])
+                    .data(
+                        'daterangepicker',
+                    );
+        }
+
+        if (!picker) {
+            throw new Error(
+                'Unable to locate the Revel '
+                + 'daterangepicker during Apply.',
+            );
+        }
+
+        if (
+            typeof picker.clickApply
+            !== 'function'
+        ) {
+            throw new Error(
+                'The Revel daterangepicker does not '
+                + 'expose clickApply().',
+            );
+        }
+
+        picker.clickApply();
+    });
 
 
     /*
-     * Allow Revel's AJAX request / table refresh
-     * to begin and settle.
+     * The picker should disappear once Apply runs.
      */
-    await page.waitForTimeout(1500);
-
-    await page.waitForLoadState(
-        'networkidle',
-        {
-            timeout: 30_000,
-        },
-    ).catch(() => {});
-
-
-    /*
-     * Final date validation after the refresh.
-     */
-    const finalStartValue =
-        await startDate.inputValue();
-
-    const finalEndValue =
-        await endDate.inputValue();
+    await visibleDatePicker.waitFor({
+        state: 'hidden',
+        timeout: 30_000,
+    });
 
     console.log(
-        `Final Order History date range: `
-        + `${finalStartValue} through ${finalEndValue}`,
+        'Date picker closed. Waiting for '
+        + 'Order History to refresh...',
     );
 
-    if (
-        finalStartValue !== reportDate
-        || finalEndValue !== reportDate
-    ) {
-        throw new Error(
-            `ORDER HISTORY DATE CHANGED UNEXPECTEDLY. `
-            + `Expected ${reportDate}, `
-            + `but Revel shows `
-            + `${finalStartValue} through ${finalEndValue}.`,
-        );
-    }
+
+    /*
+     * Wait until the visible report-date row
+     * shows the requested date.
+     *
+     * This is better than an arbitrary sleep.
+     */
+    await page.waitForFunction(
+        ({
+            expectedDate,
+        }) => {
+
+            const normalizeDate =
+                (value) => {
+
+                    const match =
+                        String(value)
+                            .match(
+                                /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
+                            );
+
+                    if (!match) {
+                        return null;
+                    }
+
+                    const [
+                        ,
+                        month,
+                        day,
+                        year,
+                    ] = match;
+
+                    return (
+                        `${month.padStart(2, '0')}/`
+                        + `${day.padStart(2, '0')}/`
+                        + `${year}`
+                    );
+                };
+
+
+            const reportDateRow =
+                document.querySelector(
+                    '.report-date-row',
+                );
+
+            if (!reportDateRow) {
+                return false;
+            }
+
+            const displayedDates =
+                (
+                    reportDateRow
+                        .textContent
+                    ?? ''
+                )
+                    .match(
+                        /\d{1,2}\/\d{1,2}\/\d{4}/g,
+                    )
+                    ?.map(
+                        normalizeDate,
+                    );
+
+            if (
+                !displayedDates
+                || displayedDates.length < 1
+            ) {
+                return false;
+            }
+
+            const expected =
+                normalizeDate(
+                    expectedDate,
+                );
+
+            /*
+             * For a single-day report, every
+             * visible report date should equal
+             * the requested date.
+             */
+            return displayedDates
+                .every(
+                    (date) =>
+                        date === expected,
+                );
+        },
+        {
+            expectedDate:
+                reportDate,
+        },
+        {
+            timeout: 90_000,
+            polling: 500,
+        },
+    );
+
 
     console.log(
-        'Order History date applied successfully.',
+        `Order History date applied successfully: `
+        + `${reportDate}`,
     );
 }
-
 /**
  * Collect every unique order ID currently displayed
  * on the Order History page.
