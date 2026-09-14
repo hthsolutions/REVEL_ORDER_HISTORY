@@ -591,78 +591,237 @@ async function setReportDate(
     page,
     reportDate,
 ) {
-
     console.log(
         `Setting Order History date: ${reportDate}`,
     );
 
     /*
-     * Common Revel daterangepicker fields.
+     * Order History exposes dedicated report-filter
+     * fields with IDs date-from and date-to.
      *
-     * This is similar to the fields from your
-     * Sales Summary actor.
+     * Do NOT use:
+     *
+     * input[name="daterangepicker_start"]
+     *
+     * because Revel also creates another internal
+     * daterangepicker input with the same name.
      */
-    const startDate = page.locator(
-        'input[name="daterangepicker_start"]',
+
+    const startDate =
+        page.locator('#date-from');
+
+    const endDate =
+        page.locator('#date-to');
+
+    await startDate.waitFor({
+        state: 'visible',
+        timeout: 20_000,
+    });
+
+    await endDate.waitFor({
+        state: 'visible',
+        timeout: 20_000,
+    });
+
+
+    /*
+     * Clear and enter requested date.
+     */
+    await startDate.fill(reportDate);
+
+    await endDate.fill(reportDate);
+
+
+    console.log(
+        `Order History date fields entered: `
+        + `${reportDate} through ${reportDate}`,
     );
 
-    const endDate = page.locator(
-        'input[name="daterangepicker_end"]',
+
+    /*
+     * Read them back before running the report.
+     */
+    const startValue =
+        await startDate.inputValue();
+
+    const endValue =
+        await endDate.inputValue();
+
+    console.log(
+        `Date field validation: `
+        + `start=${startValue}, `
+        + `end=${endValue}`,
     );
 
     if (
-        await startDate
-            .count()
+        startValue !== reportDate
+        || endValue !== reportDate
     ) {
-        await startDate.fill(
-            reportDate,
+        throw new Error(
+            `ORDER HISTORY DATE VALIDATION FAILED. `
+            + `Expected ${reportDate} through ${reportDate}, `
+            + `but found ${startValue} through ${endValue}.`,
         );
     }
 
-    if (
-        await endDate
-            .count()
+
+    /*
+     * Revel may require change events for its
+     * report-filter logic to notice the new values.
+     */
+    await startDate.evaluate((element) => {
+        element.dispatchEvent(
+            new Event(
+                'change',
+                {
+                    bubbles: true,
+                },
+            ),
+        );
+    });
+
+    await endDate.evaluate((element) => {
+        element.dispatchEvent(
+            new Event(
+                'change',
+                {
+                    bubbles: true,
+                },
+            ),
+        );
+    });
+
+
+    /*
+     * Find the Order History refresh/search/apply
+     * control.
+     *
+     * We can tighten this selector after seeing
+     * what the page exposes, but unlike the date
+     * fields this is intentionally flexible.
+     */
+    const reportButton =
+        page.locator(
+            'button:visible, input[type="submit"]:visible',
+        ).filter({
+            hasText: /search|apply|refresh|update|run/i,
+        }).first();
+
+
+    /*
+     * Buttons implemented as input[type=submit]
+     * don't expose textContent, so check both
+     * button text and value.
+     */
+    let clickedReportButton = false;
+
+    const visibleButtons =
+        page.locator(
+            'button:visible, input[type="submit"]:visible',
+        );
+
+    const buttonCount =
+        await visibleButtons.count();
+
+    for (
+        let i = 0;
+        i < buttonCount;
+        i++
     ) {
-        await endDate.fill(
-            reportDate,
+        const button =
+            visibleButtons.nth(i);
+
+        const text =
+            (
+                await button.textContent()
+                    .catch(() => '')
+            )?.trim()
+            || '';
+
+        const value =
+            (
+                await button.getAttribute('value')
+                    .catch(() => '')
+            )?.trim()
+            || '';
+
+        const label =
+            `${text} ${value}`.trim();
+
+        if (
+            /search|apply|refresh|update|run/i
+                .test(label)
+        ) {
+            console.log(
+                `Running Order History report `
+                + `using button: "${label}"`,
+            );
+
+            await button.click();
+
+            clickedReportButton = true;
+
+            break;
+        }
+    }
+
+
+    if (!clickedReportButton) {
+        /*
+         * Sometimes changing the date itself causes
+         * Revel to refresh, so don't immediately fail.
+         */
+        console.warn(
+            'No Search/Apply/Refresh button was found. '
+            + 'Checking whether Revel refreshed automatically.',
         );
     }
 
-    /*
-     * Look for the report refresh / apply button.
-     */
-    const refreshButton = page.getByRole(
-        'button',
-        {
-            name: /apply|refresh|update|run/i,
-        },
-    ).first();
-
-    if (
-        await refreshButton
-            .isVisible()
-            .catch(() => false)
-    ) {
-        await refreshButton.click();
-    }
 
     /*
-     * Give Revel time to reload the order list.
+     * Allow Revel's AJAX request / table refresh
+     * to begin and settle.
      */
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1500);
 
     await page.waitForLoadState(
         'networkidle',
         {
-            timeout: 30000,
+            timeout: 30_000,
         },
     ).catch(() => {});
 
+
+    /*
+     * Final date validation after the refresh.
+     */
+    const finalStartValue =
+        await startDate.inputValue();
+
+    const finalEndValue =
+        await endDate.inputValue();
+
     console.log(
-        'Order History date applied.',
+        `Final Order History date range: `
+        + `${finalStartValue} through ${finalEndValue}`,
+    );
+
+    if (
+        finalStartValue !== reportDate
+        || finalEndValue !== reportDate
+    ) {
+        throw new Error(
+            `ORDER HISTORY DATE CHANGED UNEXPECTEDLY. `
+            + `Expected ${reportDate}, `
+            + `but Revel shows `
+            + `${finalStartValue} through ${finalEndValue}.`,
+        );
+    }
+
+    console.log(
+        'Order History date applied successfully.',
     );
 }
-
 
 /**
  * Collect every unique order ID currently displayed
