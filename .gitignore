@@ -1,10 +1,9 @@
-# This file tells Git which files shouldn't be added to source control
-
+node_modules/
+.env
+.env.*
+storage/
+apify_storage/
+.idea/
+.vscode/
 .DS_Store
-.idea
-.vscode
-.zed
-dist
-node_modules
-apify_storage
-storage
+*.log

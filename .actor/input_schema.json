@@ -1,102 +1,50 @@
 {
-    "$schema": "https://apify.com/schemas/v1/input.ide.json",
-    "title": "Layne's Revel Sales Summary",
-    "description": "Credentials and report settings for the Layne's Revel Sales Summary.",
+    "title": "Revel Order History",
+    "description": "Extract order-level and item-level data from Revel Order History.",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
-        "url": {
-            "title": "Revel Sales Summary URL",
-            "type": "string",
-            "editor": "textfield",
-            "description": "URL of the Revel Sales Summary report.",
-            "default": "https://laynes.revelup.com/reports/sales_summary/"
-        },
-        "username": {
-            "title": "Revel username",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Username used to sign into Revel.",
-            "isSecret": true
-        },
-        "password": {
-            "title": "Revel password",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Password used to sign into Revel.",
-            "isSecret": true
-        },
-        "establishment": {
-            "title": "Revel establishment",
-            "type": "string",
-            "editor": "select",
-            "description": "Establishment to select after login. The current Actor version supports Leander only.",
-            "default": "Leander",
-            "enum": [
-                "Lampasas",
-                "Leander",
-                "Marble Falls"
-            ],
-            "enumTitles": [
-                "41 | Lampasas",
-                "42 | Leander",
-                "29 | Marble Falls"
-            ]
-        },
-        "startDate": {
-            "title": "Start date",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Report start date in MM/DD/YYYY format.",
-            "default": "08/31/2026"
-        },
-        "startTime": {
-            "title": "Start time",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Report start time in HH:MM 12-hour format.",
-            "default": "06:00"
-        },
-        "startMeridiem": {
-            "title": "Start AM/PM",
-            "type": "string",
-            "editor": "hidden",
-            "description": "The current Actor uses AM for the report start time.",
-            "default": "AM"
-        },
-        "endDate": {
-            "title": "End date",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Report end date in MM/DD/YYYY format.",
-            "default": "09/01/2026"
-        },
-        "endTime": {
-            "title": "End time",
-            "type": "string",
-            "editor": "textfield",
-            "description": "Report end time in HH:MM 12-hour format.",
-            "default": "06:00"
-        },
-        "endMeridiem": {
-            "title": "End AM/PM",
-            "type": "string",
-            "editor": "hidden",
-            "description": "The current Actor uses AM for the report end time.",
-            "default": "AM"
-        }
+      "username": {
+        "title": "Revel Username",
+        "type": "string",
+        "description": "Username used to log into Revel.",
+        "editor": "textfield"
+      },
+      "password": {
+        "title": "Revel Password",
+        "type": "string",
+        "description": "Password used to log into Revel.",
+        "editor": "textfield",
+        "isSecret": true
+      },
+      "store": {
+        "title": "Store",
+        "type": "string",
+        "description": "Revel establishment to extract order history for.",
+        "editor": "textfield",
+        "default": "Leander"
+      },
+      "report_date": {
+        "title": "Report Date",
+        "type": "string",
+        "description": "Business date to extract in MM/DD/YYYY format.",
+        "editor": "textfield",
+        "default": "09/12/2026"
+      },
+      "max_concurrency": {
+        "title": "Maximum Concurrency",
+        "type": "integer",
+        "description": "Maximum number of order detail pages to process concurrently.",
+        "editor": "number",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 10
+      }
     },
     "required": [
-        "url",
-        "username",
-        "password",
-        "establishment",
-        "startDate",
-        "startTime",
-        "startMeridiem",
-        "endDate",
-        "endTime",
-        "endMeridiem"
-    ],
-    "additionalProperties": false
-}
+      "username",
+      "password",
+      "store",
+      "report_date"
+    ]
+  }
