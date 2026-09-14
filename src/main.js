@@ -2848,7 +2848,6 @@ async function processOrders(
     orders,
     concurrency,
 ) {
-
     console.log(
         `Processing `
         + `${orders.length} `
@@ -2856,38 +2855,172 @@ async function processOrders(
         + `${concurrency}...`,
     );
 
-
     const results =
         new Array(
             orders.length,
         );
 
+    let nextIndex = 0;
+    let completedCount = 0;
 
-    let nextIndex =
-        0;
+    const startTime =
+        Date.now();
+
+
+    function formatDuration(
+        milliseconds,
+    ) {
+        const totalSeconds =
+            Math.max(
+                0,
+                Math.round(
+                    milliseconds / 1000,
+                ),
+            );
+
+        const hours =
+            Math.floor(
+                totalSeconds / 3600,
+            );
+
+        const minutes =
+            Math.floor(
+                (
+                    totalSeconds % 3600
+                ) / 60,
+            );
+
+        const seconds =
+            totalSeconds % 60;
+
+
+        if (hours > 0) {
+            return (
+                `${hours}h `
+                + `${minutes}m `
+                + `${seconds}s`
+            );
+        }
+
+        if (minutes > 0) {
+            return (
+                `${minutes}m `
+                + `${seconds}s`
+            );
+        }
+
+        return `${seconds}s`;
+    }
+
+
+    function logProgress() {
+        const elapsedMs =
+            Date.now()
+            - startTime;
+
+        const elapsedSeconds =
+            elapsedMs / 1000;
+
+        /*
+         * This is average throughput across
+         * the whole worker pool.
+         */
+        const ordersPerSecond =
+            completedCount > 0
+                ? completedCount
+                    / elapsedSeconds
+                : 0;
+
+        const remainingOrders =
+            orders.length
+            - completedCount;
+
+        const estimatedRemainingMs =
+            ordersPerSecond > 0
+                ? (
+                    remainingOrders
+                    / ordersPerSecond
+                ) * 1000
+                : 0;
+
+        const estimatedTotalMs =
+            ordersPerSecond > 0
+                ? (
+                    orders.length
+                    / ordersPerSecond
+                ) * 1000
+                : 0;
+
+        const percentComplete =
+            (
+                completedCount
+                / orders.length
+            ) * 100;
+
+
+        console.log(
+            '----------------------------------------',
+        );
+
+        console.log(
+            `PROGRESS: `
+            + `${completedCount}`
+            + ` / `
+            + `${orders.length}`
+            + ` orders `
+            + `(${percentComplete.toFixed(1)}%)`,
+        );
+
+        console.log(
+            `Elapsed: `
+            + `${formatDuration(
+                elapsedMs,
+            )}`,
+        );
+
+        console.log(
+            `Throughput: `
+            + `${ordersPerSecond
+                .toFixed(2)} `
+            + `orders/sec`,
+        );
+
+        console.log(
+            `Estimated remaining: `
+            + `${formatDuration(
+                estimatedRemainingMs,
+            )}`,
+        );
+
+        console.log(
+            `Estimated total runtime: `
+            + `${formatDuration(
+                estimatedTotalMs,
+            )}`,
+        );
+
+        console.log(
+            '----------------------------------------',
+        );
+    }
 
 
     async function worker(
         workerNumber,
     ) {
-
         while (true) {
-
             const index =
                 nextIndex++;
 
-
             if (
-                index >= orders.length
+                index
+                >= orders.length
             ) {
-
                 return;
             }
 
-
             const order =
                 orders[index];
-
 
             console.log(
                 `Worker ${workerNumber}: `
@@ -2903,6 +3036,23 @@ async function processOrders(
                     browserContext,
                     order,
                 );
+
+
+            completedCount += 1;
+
+
+            /*
+             * Log every 10 completed orders,
+             * plus the final order.
+             */
+            if (
+                completedCount % 10 === 0
+                ||
+                completedCount
+                === orders.length
+            ) {
+                logProgress();
+            }
         }
     }
 
@@ -2920,7 +3070,6 @@ async function processOrders(
                 length:
                     workerCount,
             },
-
             (
                 _,
                 index,
@@ -2933,6 +3082,48 @@ async function processOrders(
 
     await Promise.all(
         workers,
+    );
+
+
+    const totalElapsedMs =
+        Date.now()
+        - startTime;
+
+
+    console.log(
+        '========================================',
+    );
+
+    console.log(
+        'ORDER PROCESSING COMPLETE',
+    );
+
+    console.log(
+        `Processed: `
+        + `${orders.length} orders`,
+    );
+
+    console.log(
+        `Total runtime: `
+        + `${formatDuration(
+            totalElapsedMs,
+        )}`,
+    );
+
+    console.log(
+        `Average throughput: `
+        + `${(
+            orders.length
+            / (
+                totalElapsedMs
+                / 1000
+            )
+        ).toFixed(2)} `
+        + `orders/sec`,
+    );
+
+    console.log(
+        '========================================',
     );
 
 
