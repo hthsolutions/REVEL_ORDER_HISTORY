@@ -1540,196 +1540,275 @@ async function setReportDate(
  * ============================================================
  */
 
-async function collectOrderIds(
-    page,
-) {
-
+async function collectOrderIds(page) {
     console.log(
-        'Collecting Order IDs...',
+        'Collecting Order IDs across all Order History pages...',
     );
 
+    const allOrders = new Map();
 
-    const orderLinks =
-        page.locator(
+    let pageNumber = 1;
+
+    while (true) {
+        /*
+         * Wait for the Order History table to contain
+         * at least one order link.
+         */
+        const orderLinks = page.locator(
             'a[href*="/reports/orders/"]',
         );
-
-
-    /*
-     * Order History refreshes asynchronously.
-     *
-     * Do not count immediately after Apply.
-     */
-    try {
 
         await orderLinks
             .first()
             .waitFor({
-                state:
-                    'visible',
-
-                timeout:
-                    60_000,
+                state: 'visible',
+                timeout: 60_000,
             });
 
-    } catch {
 
-        console.warn(
-            'No Order History links '
-            + 'became visible within '
-            + '60 seconds.',
-        );
-    }
+        /*
+         * Extract orders on the current page.
+         */
+        const rawOrders = await orderLinks.evaluateAll(
+            (links) => {
+                return links
+                    .map((link) => {
+                        const href = link.href ?? '';
 
-
-    /*
-     * Capture all qualifying links,
-     * visible or otherwise.
-     */
-    const rawOrders =
-        await page
-            .locator(
-                'a[href*="/reports/orders/"]',
-            )
-            .evaluateAll(
-                links => {
-
-                    return links
-                        .map(
-                            link => {
-
-                                const href =
-                                    link.href
-                                    ?? '';
-
-
-                                const match =
-                                    href.match(
-                                        /\/reports\/orders\/(\d+)\/?/,
-                                    );
-
-
-                                if (!match) {
-                                    return null;
-                                }
-
-
-                                return {
-                                    order_id:
-                                        match[1],
-
-                                    text:
-                                        (
-                                            link.textContent
-                                            ?? ''
-                                        )
-                                            .trim(),
-
-                                    url:
-                                        href,
-                                };
-                            },
-                        )
-                        .filter(
-                            Boolean,
+                        const match = href.match(
+                            /\/reports\/orders\/(\d+)\/?/,
                         );
-                },
+
+                        if (!match) {
+                            return null;
+                        }
+
+                        return {
+                            order_id: match[1],
+                            text:
+                                (link.textContent ?? '')
+                                    .trim(),
+                            url: href,
+                        };
+                    })
+                    .filter(Boolean);
+            },
+        );
+
+
+        /*
+         * Deduplicate orders globally.
+         */
+        for (const order of rawOrders) {
+            allOrders.set(
+                order.order_id,
+                order,
+            );
+        }
+
+
+        console.log(
+            `Order History page ${pageNumber}: `
+            + `${rawOrders.length} matching links, `
+            + `${allOrders.size} total unique orders so far.`,
+        );
+
+
+        /*
+         * Capture something that identifies the current page.
+         *
+         * We use the first order ID so we can verify that the
+         * table really changed after clicking Next.
+         */
+        const currentFirstOrder =
+            rawOrders[0]?.order_id
+            ?? null;
+
+
+        /*
+         * Locate the visible "Next" pagination control.
+         *
+         * Revel's paginator uses the right-chevron character.
+         */
+        const nextButton = page
+            .locator(
+                'a:visible, button:visible',
+            )
+            .filter({
+                hasText: /^>$/,
+            })
+            .last();
+
+
+        const nextExists =
+            await nextButton.count() > 0;
+
+
+        if (!nextExists) {
+            console.log(
+                'No Next pagination control found. '
+                + 'Assuming final page.',
+            );
+
+            break;
+        }
+
+
+        /*
+         * Determine whether the Next control is disabled.
+         *
+         * Different Revel builds may mark the button or
+         * its parent as disabled.
+         */
+        const isDisabled =
+            await nextButton.evaluate((element) => {
+                const parent =
+                    element.parentElement;
+
+                const classText =
+                    `${
+                        element.className ?? ''
+                    } ${
+                        parent?.className ?? ''
+                    }`;
+
+                return (
+                    element.hasAttribute(
+                        'disabled',
+                    )
+                    ||
+                    element.getAttribute(
+                        'aria-disabled',
+                    ) === 'true'
+                    ||
+                    /\bdisabled\b/i.test(
+                        classText,
+                    )
+                );
+            })
+            .catch(
+                () => true,
             );
 
 
-    /*
-     * Deduplicate by Revel Order ID.
-     */
-    const uniqueOrders =
-        [
-            ...new Map(
-                rawOrders.map(
-                    order => [
-                        order.order_id,
-                        order,
-                    ],
-                ),
-            ).values(),
-        ];
+        if (isDisabled) {
+            console.log(
+                `Reached final Order History page: `
+                + `${pageNumber}`,
+            );
+
+            break;
+        }
+
+
+        console.log(
+            `Moving to Order History page `
+            + `${pageNumber + 1}...`,
+        );
+
+
+        /*
+         * Click Next.
+         */
+        await nextButton.click();
+
+
+        /*
+         * Wait until the table changes.
+         *
+         * This is much safer than using a fixed sleep.
+         */
+        await page.waitForFunction(
+            ({
+                previousFirstOrder,
+            }) => {
+                const links = [
+                    ...document.querySelectorAll(
+                        'a[href*="/reports/orders/"]',
+                    ),
+                ];
+
+                const ids = links
+                    .map((link) => {
+                        const match =
+                            link.href.match(
+                                /\/reports\/orders\/(\d+)\/?/,
+                            );
+
+                        return match
+                            ? match[1]
+                            : null;
+                    })
+                    .filter(Boolean);
+
+                if (ids.length === 0) {
+                    return false;
+                }
+
+                return (
+                    ids[0]
+                    !== previousFirstOrder
+                );
+            },
+            {
+                previousFirstOrder:
+                    currentFirstOrder,
+            },
+            {
+                timeout: 60_000,
+                polling: 500,
+            },
+        );
+
+
+        /*
+         * Small stabilization delay after the table changes.
+         */
+        await page.waitForTimeout(
+            500,
+        );
+
+
+        pageNumber += 1;
+    }
+
+
+    const uniqueOrders = [
+        ...allOrders.values(),
+    ];
 
 
     console.log(
-        `Raw matching links found: `
-        + `${rawOrders.length}`,
+        '========================================',
     );
 
+    console.log(
+        `TOTAL ORDER HISTORY PAGES: `
+        + `${pageNumber}`,
+    );
 
     console.log(
-        `Unique Order IDs found: `
+        `TOTAL UNIQUE ORDER IDS: `
         + `${uniqueOrders.length}`,
+    );
+
+    console.log(
+        '========================================',
     );
 
 
     if (
         uniqueOrders.length === 0
     ) {
-
-        /*
-         * Diagnostic information if the
-         * page really has no records.
-         */
-        const bodyText =
-            await page
-                .locator(
-                    'body',
-                )
-                .innerText()
-                .catch(
-                    () => '',
-                );
-
-
-        console.log(
-            `Current URL: `
-            + `${page.url()}`,
-        );
-
-
-        console.log(
-            `Page reports no results: `
-            + `${
-                /no data|no results|no records/i
-                    .test(
-                        bodyText,
-                    )
-            }`,
-        );
-
-
         throw new Error(
             'No Order IDs were found '
-            + 'on the Order History page '
-            + 'after waiting for '
-            + 'the report refresh.',
+            + 'across the Order History pages.',
         );
     }
 
 
-    console.log(
-        `First Order ID: `
-        + `${uniqueOrders[0]
-            .order_id}`,
-    );
-
-
-    console.log(
-        `Last Order ID: `
-        + `${
-            uniqueOrders[
-                uniqueOrders.length - 1
-            ].order_id
-        }`,
-    );
-
-
     return uniqueOrders;
 }
-
 
 /*
  * ============================================================
