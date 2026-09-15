@@ -2005,6 +2005,48 @@ async function parseOrderPage(
 
             /*
              * ------------------------------------------------
+             * ORDER TOTALS TABLE
+             * ------------------------------------------------
+             */
+
+            const getOrderTotals = () => {
+
+                const table =
+                    document.querySelector(
+                        'table.order_detail_table',
+                    );
+
+                if (!table) {
+                    return {};
+                }
+
+                const rows = [
+                    ...table.querySelectorAll('tr'),
+                ];
+
+                if (rows.length < 2) {
+                    return {};
+                }
+
+                const headers = [
+                    ...rows[0].querySelectorAll('th'),
+                ].map(th => cleanValue(th.textContent));
+
+                const values = [
+                    ...rows[1].querySelectorAll('td'),
+                ].map(td => cleanValue(td.textContent));
+
+                return Object.fromEntries(
+                    headers.map((header, index) => [
+                        header,
+                        values[index] ?? null,
+                    ]),
+                );
+            };
+
+
+            /*
+             * ------------------------------------------------
              * FIND NUMERIC VALUE BY LABEL
              * ------------------------------------------------
              */
@@ -2371,6 +2413,66 @@ async function parseOrderPage(
                             }
 
 
+                            const quantityNumber =
+                                Number(quantity);
+
+                            const priceNumber =
+                                Number(price);
+
+                            const validQuantity =
+                                Number.isFinite(quantityNumber)
+                                    ? quantityNumber
+                                    : null;
+
+                            const validPrice =
+                                Number.isFinite(priceNumber)
+                                    ? priceNumber
+                                    : null;
+
+                            const modifierTotal =
+                                validQuantity !== null
+                                    ? modifiers.reduce(
+                                        (sum, modifier) => {
+                                            const modifierPrice =
+                                                Number(
+                                                    modifier.modifier_price,
+                                                );
+
+                                            return sum + (
+                                                Number.isFinite(modifierPrice)
+                                                    ? modifierPrice * validQuantity
+                                                    : 0
+                                            );
+                                        },
+                                        0,
+                                    )
+                                    : null;
+
+                            const grossItemSales =
+                                validQuantity !== null
+                                && validPrice !== null
+                                    ? validQuantity * validPrice
+                                    : null;
+
+                            const netItemSales =
+                                grossItemSales !== null
+                                && modifierTotal !== null
+                                    ? grossItemSales + modifierTotal
+                                    : grossItemSales;
+
+                            const voidedBy =
+                                getDetail(
+                                    container,
+                                    'Voided By:',
+                                );
+
+                            const voidedDate =
+                                getDetail(
+                                    container,
+                                    'Voided date:',
+                                );
+
+
                             return {
                                 item_index:
                                     index + 1,
@@ -2427,15 +2529,15 @@ async function parseOrderPage(
                                     ),
 
                                 voided_by:
-                                    getDetail(
-                                        container,
-                                        'Voided By:',
-                                    ),
+                                    voidedBy,
 
                                 voided_date:
-                                    getDetail(
-                                        container,
-                                        'Voided date:',
+                                    voidedDate,
+
+                                is_voided:
+                                    Boolean(
+                                        voidedBy
+                                        || voidedDate
                                     ),
 
                                 price,
@@ -2450,6 +2552,15 @@ async function parseOrderPage(
 
                                 extended_price:
                                     extendedPrice,
+
+                                gross_item_sales:
+                                    grossItemSales,
+
+                                modifier_total:
+                                    modifierTotal,
+
+                                net_item_sales:
+                                    netItemSales,
 
                                 weight:
                                     numbers[
@@ -2566,6 +2677,10 @@ async function parseOrderPage(
                     );
 
 
+            const orderTotals =
+                getOrderTotals();
+
+
             /*
              * ------------------------------------------------
              * RETURN ORDER
@@ -2635,34 +2750,36 @@ async function parseOrderPage(
                     ),
 
                 subtotal:
-                    findTextValue(
-                        'subtotal',
-                    ),
+                    orderTotals['Subtotal']
+                    ?? null,
 
                 service_fee:
-                    findTextValue(
-                        'service fee',
-                    ),
+                    orderTotals['Service Fee Total']
+                    ?? null,
 
                 tax:
-                    findTextValue(
-                        'tax',
-                    ),
+                    orderTotals['Tax']
+                    ?? null,
+
+                crv_value:
+                    orderTotals['CRV value']
+                    ?? null,
+
+                surcharge:
+                    orderTotals['Surcharge']
+                    ?? null,
 
                 final_total:
-                    findTextValue(
-                        'final total',
-                    ),
+                    orderTotals['Final Total']
+                    ?? null,
 
                 remaining_due:
-                    findTextValue(
-                        'remaining due',
-                    ),
+                    orderTotals['Remaining Due']
+                    ?? null,
 
-                discount:
-                    findTextValue(
-                        'discount',
-                    ),
+                discount_amount:
+                    orderTotals['Discount Amount']
+                    ?? null,
 
                 item_count:
                     items.length,
