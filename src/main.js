@@ -1848,6 +1848,23 @@ async function parseOrderPage(
                 };
 
 
+            const roundMoney =
+                value => {
+
+                    if (
+                        value === null
+                        || value === undefined
+                        || !Number.isFinite(Number(value))
+                    ) {
+                        return null;
+                    }
+
+                    return Math.round(
+                        (Number(value) + Number.EPSILON) * 100
+                    ) / 100;
+                };
+
+
             /*
              * ------------------------------------------------
              * DETAIL LABEL HELPER
@@ -2410,31 +2427,6 @@ async function parseOrderPage(
                                 ?? null;
 
 
-                            let extendedPrice =
-                                null;
-
-
-                            if (
-                                price !== null
-                                &&
-                                quantity !== null
-                                &&
-                                !Number.isNaN(
-                                    Number(price),
-                                )
-                                &&
-                                !Number.isNaN(
-                                    Number(quantity),
-                                )
-                            ) {
-
-                                extendedPrice =
-                                    Number(price)
-                                    *
-                                    Number(quantity);
-                            }
-
-
                             const quantityNumber =
                                 Number(quantity);
 
@@ -2451,36 +2443,59 @@ async function parseOrderPage(
                                     ? priceNumber
                                     : null;
 
-                            const modifierTotal =
-                                validQuantity !== null
-                                    ? modifiers.reduce(
-                                        (sum, modifier) => {
-                                            const modifierPrice =
-                                                Number(
-                                                    modifier.modifier_price,
-                                                );
-
-                                            return sum + (
-                                                Number.isFinite(modifierPrice)
-                                                    ? modifierPrice * validQuantity
-                                                    : 0
-                                            );
-                                        },
-                                        0,
-                                    )
-                                    : null;
 
                             const grossItemSales =
                                 validQuantity !== null
                                 && validPrice !== null
-                                    ? validQuantity * validPrice
+                                    ? roundMoney(
+                                        validQuantity * validPrice
+                                    )
                                     : null;
+
+
+                            const modifierTotal =
+                                validQuantity !== null
+                                    ? roundMoney(
+                                        modifiers.reduce(
+                                            (sum, modifier) => {
+
+                                                const modifierPrice =
+                                                    Number(
+                                                        modifier.modifier_price,
+                                                    );
+
+                                                return sum + (
+                                                    Number.isFinite(
+                                                        modifierPrice,
+                                                    )
+                                                        ? modifierPrice
+                                                            * validQuantity
+                                                        : 0
+                                                );
+                                            },
+                                            0,
+                                        )
+                                    )
+                                    : null;
+
 
                             const netItemSales =
                                 grossItemSales !== null
                                 && modifierTotal !== null
-                                    ? grossItemSales + modifierTotal
+                                    ? roundMoney(
+                                        grossItemSales
+                                        + modifierTotal
+                                    )
                                     : grossItemSales;
+
+
+                            /*
+                             * Keep extended_price for backwards
+                             * compatibility with the existing output.
+                             */
+                            const extendedPrice =
+                                grossItemSales;
+
 
                             const voidedBy =
                                 getDetail(
