@@ -1832,6 +1832,22 @@ async function parseOrderPage(
                 };
 
 
+            const toNumberOrNull =
+                value => {
+                    const cleaned = cleanValue(value);
+
+                    if (cleaned === null) {
+                        return null;
+                    }
+
+                    const number = Number(cleaned);
+
+                    return Number.isFinite(number)
+                        ? number
+                        : null;
+                };
+
+
             /*
              * ------------------------------------------------
              * DETAIL LABEL HELPER
@@ -2317,6 +2333,12 @@ async function parseOrderPage(
                                         ?? null,
                                 };
                             },
+                        )
+                        .filter(
+                            modifier =>
+                                modifier.modifier_name !== null
+                                || modifier.modifier_cost !== null
+                                || modifier.modifier_price !== null,
                         );
                 };
 
@@ -2750,36 +2772,28 @@ async function parseOrderPage(
                     ),
 
                 subtotal:
-                    orderTotals['Subtotal']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Subtotal']),
 
                 service_fee:
-                    orderTotals['Service Fee Total']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Service Fee Total']),
 
                 tax:
-                    orderTotals['Tax']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Tax']),
 
                 crv_value:
-                    orderTotals['CRV value']
-                    ?? null,
+                    toNumberOrNull(orderTotals['CRV value']),
 
                 surcharge:
-                    orderTotals['Surcharge']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Surcharge']),
 
                 final_total:
-                    orderTotals['Final Total']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Final Total']),
 
                 remaining_due:
-                    orderTotals['Remaining Due']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Remaining Due']),
 
                 discount_amount:
-                    orderTotals['Discount Amount']
-                    ?? null,
+                    toNumberOrNull(orderTotals['Discount Amount']),
 
                 item_count:
                     items.length,
