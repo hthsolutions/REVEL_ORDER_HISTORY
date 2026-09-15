@@ -199,6 +199,22 @@ let processingSucceeded =
 
 /*
  * ============================================================
+ * NORMALIZED OUTPUT DATASETS
+ * ============================================================
+ */
+
+const ordersDataset =
+    await Actor.openDataset('revel-orders');
+
+const orderItemsDataset =
+    await Actor.openDataset('revel-order-items');
+
+const orderItemModifiersDataset =
+    await Actor.openDataset('revel-order-item-modifiers');
+
+
+/*
+ * ============================================================
  * GENERIC HELPERS
  * ============================================================
  */
@@ -228,6 +244,24 @@ function clean(value) {
     }
 
     return result;
+}
+
+
+function toNumberOrNullOutside(value) {
+
+    if (
+        value === null
+        || value === undefined
+        || value === ''
+    ) {
+        return null;
+    }
+
+    const number = Number(value);
+
+    return Number.isFinite(number)
+        ? number
+        : null;
 }
 
 
@@ -1848,23 +1882,6 @@ async function parseOrderPage(
                 };
 
 
-            const roundMoney =
-                value => {
-
-                    if (
-                        value === null
-                        || value === undefined
-                        || !Number.isFinite(Number(value))
-                    ) {
-                        return null;
-                    }
-
-                    return Math.round(
-                        (Number(value) + Number.EPSILON) * 100
-                    ) / 100;
-                };
-
-
             /*
              * ------------------------------------------------
              * DETAIL LABEL HELPER
@@ -2427,6 +2444,31 @@ async function parseOrderPage(
                                 ?? null;
 
 
+                            let extendedPrice =
+                                null;
+
+
+                            if (
+                                price !== null
+                                &&
+                                quantity !== null
+                                &&
+                                !Number.isNaN(
+                                    Number(price),
+                                )
+                                &&
+                                !Number.isNaN(
+                                    Number(quantity),
+                                )
+                            ) {
+
+                                extendedPrice =
+                                    Number(price)
+                                    *
+                                    Number(quantity);
+                            }
+
+
                             const quantityNumber =
                                 Number(quantity);
 
@@ -2443,59 +2485,36 @@ async function parseOrderPage(
                                     ? priceNumber
                                     : null;
 
+                            const modifierTotal =
+                                validQuantity !== null
+                                    ? modifiers.reduce(
+                                        (sum, modifier) => {
+                                            const modifierPrice =
+                                                Number(
+                                                    modifier.modifier_price,
+                                                );
+
+                                            return sum + (
+                                                Number.isFinite(modifierPrice)
+                                                    ? modifierPrice * validQuantity
+                                                    : 0
+                                            );
+                                        },
+                                        0,
+                                    )
+                                    : null;
 
                             const grossItemSales =
                                 validQuantity !== null
                                 && validPrice !== null
-                                    ? roundMoney(
-                                        validQuantity * validPrice
-                                    )
+                                    ? validQuantity * validPrice
                                     : null;
-
-
-                            const modifierTotal =
-                                validQuantity !== null
-                                    ? roundMoney(
-                                        modifiers.reduce(
-                                            (sum, modifier) => {
-
-                                                const modifierPrice =
-                                                    Number(
-                                                        modifier.modifier_price,
-                                                    );
-
-                                                return sum + (
-                                                    Number.isFinite(
-                                                        modifierPrice,
-                                                    )
-                                                        ? modifierPrice
-                                                            * validQuantity
-                                                        : 0
-                                                );
-                                            },
-                                            0,
-                                        )
-                                    )
-                                    : null;
-
 
                             const netItemSales =
                                 grossItemSales !== null
                                 && modifierTotal !== null
-                                    ? roundMoney(
-                                        grossItemSales
-                                        + modifierTotal
-                                    )
+                                    ? grossItemSales + modifierTotal
                                     : grossItemSales;
-
-
-                            /*
-                             * Keep extended_price for backwards
-                             * compatibility with the existing output.
-                             */
-                            const extendedPrice =
-                                grossItemSales;
-
 
                             const voidedBy =
                                 getDetail(
@@ -2508,6 +2527,19 @@ async function parseOrderPage(
                                     container,
                                     'Voided date:',
                                 );
+
+
+                            const isVoided =
+                                Boolean(
+                                    voidedBy
+                                    || voidedDate
+                                );
+
+
+                            const recognizedItemSales =
+                                isVoided
+                                    ? 0
+                                    : netItemSales;
 
 
                             return {
@@ -2572,10 +2604,10 @@ async function parseOrderPage(
                                     voidedDate,
 
                                 is_voided:
-                                    Boolean(
-                                        voidedBy
-                                        || voidedDate
-                                    ),
+                                    isVoided,
+
+                                recognized_item_sales:
+                                    recognizedItemSales,
 
                                 price,
 
@@ -2921,13 +2953,149 @@ async function processOrder(
 
 
         /*
-         * Push one record per order.
+         * --------------------------------------------------------
+         * NORMALIZE OUTPUT INTO THREE DATASETS
+         * --------------------------------------------------------
          *
-         * Items remain nested inside the order.
+         * 1. revel-orders
+         *    One row per order.
+         *
+         * 2. revel-order-items
+         *    One row per item event.
+         *
+         * 3. revel-order-item-modifiers
+         *    One row per modifier attached to an item.
          */
-        await Actor.pushData(
-            result,
-        );
+
+        const {
+            items: parsedItems = [],
+            ...orderRecord
+        } = result;
+
+
+        await ordersDataset.pushData({
+            record_key:
+                `${targetStore}|${order.order_id}`,
+
+            ...orderRecord,
+        });
+
+
+        const itemRecords =
+            parsedItems.map(item => {
+                const {
+                    modifiers: itemModifiers = [],
+                    ...itemRecord
+                } = item;
+
+                return {
+                    record_key:
+                        `${targetStore}|${order.order_id}|${item.item_index}`,
+
+                    location:
+                        targetStore,
+
+                    report_date,
+
+                    order_id:
+                        order.order_id,
+
+                    reporting_no:
+                        parsedOrder.reporting_no,
+
+                    ...itemRecord,
+                };
+            });
+
+
+        if (itemRecords.length > 0) {
+            await orderItemsDataset.pushData(
+                itemRecords,
+            );
+        }
+
+
+        const modifierRecords = [];
+
+        for (const item of parsedItems) {
+            const itemModifiers =
+                item.modifiers ?? [];
+
+            itemModifiers.forEach(
+                (modifier, modifierIndex) => {
+                    const modifierPrice =
+                        Number(
+                            modifier.modifier_price,
+                        );
+
+                    const quantity =
+                        Number(item.quantity);
+
+                    const modifierTotal =
+                        Number.isFinite(modifierPrice)
+                        && Number.isFinite(quantity)
+                            ? Math.round(
+                                (
+                                    modifierPrice
+                                    * quantity
+                                    + Number.EPSILON
+                                ) * 100,
+                            ) / 100
+                            : null;
+
+                    modifierRecords.push({
+                        record_key:
+                            `${targetStore}|${order.order_id}|${item.item_index}|${modifierIndex + 1}`,
+
+                        location:
+                            targetStore,
+
+                        report_date,
+
+                        order_id:
+                            order.order_id,
+
+                        reporting_no:
+                            parsedOrder.reporting_no,
+
+                        item_index:
+                            item.item_index,
+
+                        item_name:
+                            item.item_name,
+
+                        item_quantity:
+                            item.quantity,
+
+                        modifier_index:
+                            modifierIndex + 1,
+
+                        modifier_name:
+                            modifier.modifier_name,
+
+                        modifier_cost:
+                            toNumberOrNullOutside(
+                                modifier.modifier_cost,
+                            ),
+
+                        modifier_price:
+                            toNumberOrNullOutside(
+                                modifier.modifier_price,
+                            ),
+
+                        modifier_total:
+                            modifierTotal,
+                    });
+                },
+            );
+        }
+
+
+        if (modifierRecords.length > 0) {
+            await orderItemModifiersDataset.pushData(
+                modifierRecords,
+            );
+        }
 
 
         console.log(
