@@ -1,5 +1,6 @@
 import { Actor } from 'apify';
 import { PlaywrightCrawler } from 'crawlee';
+import { createClient } from '@supabase/supabase-js';
 
 
 /*
@@ -17,7 +18,7 @@ import { PlaywrightCrawler } from 'crawlee';
  * 6. Extract order-level details
  * 7. Extract item-level details
  * 8. Extract modifiers
- * 9. Push final records to Apify Dataset
+ * 9. Upsert normalized order/item records to Supabase
  *
  * ============================================================
  */
@@ -199,18 +200,48 @@ let processingSucceeded =
 
 /*
  * ============================================================
- * NORMALIZED OUTPUT DATASETS
+ * SUPABASE
  * ============================================================
+ *
+ * Required Apify environment variables / secrets:
+ *
+ * SUPABASE_URL
+ * SUPABASE_SERVICE_ROLE_KEY
+ *
+ * Production tables:
+ *
+ * revel_orders
+ * revel_order_items
  */
 
-const ordersDataset =
-    await Actor.openDataset('revel-orders');
+const supabaseUrl =
+    process.env.SUPABASE_URL;
 
-const orderItemsDataset =
-    await Actor.openDataset('revel-order-items');
+const supabaseServiceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const orderItemModifiersDataset =
-    await Actor.openDataset('revel-order-item-modifiers');
+if (!supabaseUrl) {
+    throw new Error(
+        'SUPABASE_URL environment variable is required.',
+    );
+}
+
+if (!supabaseServiceRoleKey) {
+    throw new Error(
+        'SUPABASE_SERVICE_ROLE_KEY environment variable is required.',
+    );
+}
+
+const supabase = createClient(
+    supabaseUrl,
+    supabaseServiceRoleKey,
+    {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+        },
+    },
+);
 
 
 /*
@@ -257,11 +288,89 @@ function toNumberOrNullOutside(value) {
         return null;
     }
 
-    const number = Number(value);
+    const normalized = String(value)
+        .replace(/[$,%]/g, '')
+        .trim();
+
+    const number = Number(normalized);
 
     return Number.isFinite(number)
         ? number
         : null;
+}
+
+
+function normalizeReportDate(value) {
+    const match = String(value ?? '').trim().match(
+        /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
+    );
+
+    if (!match) return null;
+
+    const [, month, day, year] = match;
+
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
+
+function normalizeTime(value) {
+    const match = String(value ?? '').trim().match(
+        /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i,
+    );
+
+    if (!match) return null;
+
+    let hour = Number(match[1]);
+    const minute = match[2];
+    const meridiem = match[3].toUpperCase();
+
+    if (meridiem === 'AM' && hour === 12) hour = 0;
+    if (meridiem === 'PM' && hour !== 12) hour += 12;
+
+    return `${String(hour).padStart(2, '0')}:${minute}:00`;
+}
+
+
+function normalizeRevelTimestamp(value) {
+    if (!value) return null;
+
+    const match = String(value).trim().match(
+        /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i,
+    );
+
+    if (!match) return null;
+
+    let [, month, day, year, hour, minute, second, meridiem] = match;
+
+    if (year.length === 2) year = `20${year}`;
+
+    let hourNumber = Number(hour);
+    meridiem = meridiem.toUpperCase();
+
+    if (meridiem === 'AM' && hourNumber === 12) hourNumber = 0;
+    if (meridiem === 'PM' && hourNumber !== 12) hourNumber += 12;
+
+    return (
+        `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')} `
+        + `${String(hourNumber).padStart(2, '0')}:${minute}:${second}`
+    );
+}
+
+
+async function upsertSupabase(table, records) {
+    if (!records || records.length === 0) return;
+
+    const { error } = await supabase
+        .from(table)
+        .upsert(records, {
+            onConflict: 'record_key',
+        });
+
+    if (error) {
+        throw new Error(
+            `Supabase upsert failed for ${table}: ${error.message}`,
+        );
+    }
 }
 
 
@@ -2444,78 +2553,6 @@ async function parseOrderPage(
                                 ?? null;
 
 
-                            let extendedPrice =
-                                null;
-
-
-                            if (
-                                price !== null
-                                &&
-                                quantity !== null
-                                &&
-                                !Number.isNaN(
-                                    Number(price),
-                                )
-                                &&
-                                !Number.isNaN(
-                                    Number(quantity),
-                                )
-                            ) {
-
-                                extendedPrice =
-                                    Number(price)
-                                    *
-                                    Number(quantity);
-                            }
-
-
-                            const quantityNumber =
-                                Number(quantity);
-
-                            const priceNumber =
-                                Number(price);
-
-                            const validQuantity =
-                                Number.isFinite(quantityNumber)
-                                    ? quantityNumber
-                                    : null;
-
-                            const validPrice =
-                                Number.isFinite(priceNumber)
-                                    ? priceNumber
-                                    : null;
-
-                            const modifierTotal =
-                                validQuantity !== null
-                                    ? modifiers.reduce(
-                                        (sum, modifier) => {
-                                            const modifierPrice =
-                                                Number(
-                                                    modifier.modifier_price,
-                                                );
-
-                                            return sum + (
-                                                Number.isFinite(modifierPrice)
-                                                    ? modifierPrice * validQuantity
-                                                    : 0
-                                            );
-                                        },
-                                        0,
-                                    )
-                                    : null;
-
-                            const grossItemSales =
-                                validQuantity !== null
-                                && validPrice !== null
-                                    ? validQuantity * validPrice
-                                    : null;
-
-                            const netItemSales =
-                                grossItemSales !== null
-                                && modifierTotal !== null
-                                    ? grossItemSales + modifierTotal
-                                    : grossItemSales;
-
                             const voidedBy =
                                 getDetail(
                                     container,
@@ -2534,12 +2571,6 @@ async function parseOrderPage(
                                     voidedBy
                                     || voidedDate
                                 );
-
-
-                            const recognizedItemSales =
-                                isVoided
-                                    ? 0
-                                    : netItemSales;
 
 
                             return {
@@ -2606,9 +2637,6 @@ async function parseOrderPage(
                                 is_voided:
                                     isVoided,
 
-                                recognized_item_sales:
-                                    recognizedItemSales,
-
                                 price,
 
                                 cost:
@@ -2618,18 +2646,6 @@ async function parseOrderPage(
                                     ?? null,
 
                                 quantity,
-
-                                extended_price:
-                                    extendedPrice,
-
-                                gross_item_sales:
-                                    grossItemSales,
-
-                                modifier_total:
-                                    modifierTotal,
-
-                                net_item_sales:
-                                    netItemSales,
 
                                 weight:
                                     numbers[
@@ -2954,148 +2970,211 @@ async function processOrder(
 
         /*
          * --------------------------------------------------------
-         * NORMALIZE OUTPUT INTO THREE DATASETS
+         * WRITE NORMALIZED RECORDS TO SUPABASE
          * --------------------------------------------------------
          *
-         * 1. revel-orders
-         *    One row per order.
+         * No Apify Dataset export is performed.
          *
-         * 2. revel-order-items
-         *    One row per item event.
+         * revel_orders:
+         *   one row per order
          *
-         * 3. revel-order-item-modifiers
-         *    One row per modifier attached to an item.
+         * revel_order_items:
+         *   one row per item; modifiers remain embedded as JSONB
          */
 
         const {
             items: parsedItems = [],
-            ...orderRecord
         } = result;
 
-
-        await ordersDataset.pushData({
+        const orderRecord = {
             record_key:
                 `${targetStore}|${order.order_id}`,
 
-            ...orderRecord,
-        });
+            location:
+                targetStore,
+
+            order_id:
+                order.order_id,
+
+            reporting_no:
+                parsedOrder.reporting_no,
+
+            created_at:
+                parsedOrder.created_at,
+
+            created_by:
+                parsedOrder.created_by,
+
+            created_date:
+                normalizeRevelTimestamp(
+                    parsedOrder.created_date,
+                ),
+
+            dining_option:
+                parsedOrder.dining_option,
+
+            discount_amount:
+                parsedOrder.discount_amount,
+
+            establishment_no:
+                parsedOrder.establishment_no,
+
+            extracted_at:
+                result.extracted_at,
+
+            final_total:
+                parsedOrder.final_total,
+
+            item_count:
+                parsedOrder.item_count,
+
+            remaining_due:
+                parsedOrder.remaining_due,
+
+            report_date:
+                normalizeReportDate(report_date),
+
+            report_end_time:
+                normalizeTime(end_time),
+
+            report_start_time:
+                normalizeTime(start_time),
+
+            service_fee:
+                parsedOrder.service_fee,
+
+            status:
+                result.status,
+
+            subtotal:
+                parsedOrder.subtotal,
+
+            surcharge:
+                parsedOrder.surcharge,
+
+            tax:
+                parsedOrder.tax,
+
+            updated_at:
+                parsedOrder.updated_at,
+
+            updated_by:
+                parsedOrder.updated_by,
+
+            updated_date:
+                normalizeRevelTimestamp(
+                    parsedOrder.updated_date,
+                ),
+        };
 
 
         const itemRecords =
-            parsedItems.map(item => {
-                const {
-                    modifiers: itemModifiers = [],
-                    ...itemRecord
-                } = item;
+            parsedItems.map(item => ({
+                record_key:
+                    `${targetStore}|${order.order_id}|${item.item_index}`,
 
-                return {
-                    record_key:
-                        `${targetStore}|${order.order_id}|${item.item_index}`,
+                location:
+                    targetStore,
 
-                    location:
-                        targetStore,
+                order_id:
+                    order.order_id,
 
-                    report_date,
+                reporting_no:
+                    parsedOrder.reporting_no,
 
-                    order_id:
-                        order.order_id,
+                item_index:
+                    item.item_index,
 
-                    reporting_no:
-                        parsedOrder.reporting_no,
+                item_name:
+                    item.item_name,
 
-                    ...itemRecord,
-                };
-            });
+                created_by:
+                    item.created_by,
 
+                created_date:
+                    normalizeRevelTimestamp(
+                        item.created_date,
+                    ),
 
-        if (itemRecords.length > 0) {
-            await orderItemsDataset.pushData(
-                itemRecords,
-            );
-        }
+                dining_option:
+                    item.dining_option,
 
+                establishment_no:
+                    item.establishment_no,
 
-        const modifierRecords = [];
+                station:
+                    item.station,
 
-        for (const item of parsedItems) {
-            const itemModifiers =
-                item.modifiers ?? [];
+                price:
+                    toNumberOrNullOutside(item.price),
 
-            itemModifiers.forEach(
-                (modifier, modifierIndex) => {
-                    const modifierPrice =
-                        Number(
-                            modifier.modifier_price,
-                        );
+                quantity:
+                    toNumberOrNullOutside(item.quantity),
 
-                    const quantity =
-                        Number(item.quantity);
+                tax_amount:
+                    toNumberOrNullOutside(item.tax_amount),
 
-                    const modifierTotal =
-                        Number.isFinite(modifierPrice)
-                        && Number.isFinite(quantity)
-                            ? Math.round(
-                                (
-                                    modifierPrice
-                                    * quantity
-                                    + Number.EPSILON
-                                ) * 100,
-                            ) / 100
-                            : null;
+                discount_total:
+                    toNumberOrNullOutside(item.discount_total),
 
-                    modifierRecords.push({
-                        record_key:
-                            `${targetStore}|${order.order_id}|${item.item_index}|${modifierIndex + 1}`,
+                modifier_cost:
+                    toNumberOrNullOutside(item.modifier_cost),
 
-                        location:
-                            targetStore,
+                modifier_price:
+                    toNumberOrNullOutside(item.modifier_price),
 
-                        report_date,
+                updated_by:
+                    item.updated_by,
 
-                        order_id:
-                            order.order_id,
+                updated_date:
+                    normalizeRevelTimestamp(
+                        item.updated_date,
+                    ),
 
-                        reporting_no:
-                            parsedOrder.reporting_no,
+                voided_by:
+                    item.voided_by,
 
-                        item_index:
-                            item.item_index,
+                voided_date:
+                    normalizeRevelTimestamp(
+                        item.voided_date,
+                    ),
 
-                        item_name:
-                            item.item_name,
+                is_voided:
+                    item.is_voided,
 
-                        item_quantity:
-                            item.quantity,
+                report_date:
+                    normalizeReportDate(report_date),
 
-                        modifier_index:
-                            modifierIndex + 1,
+                modifiers:
+                    (item.modifiers ?? []).map(
+                        modifier => ({
+                            modifier_name:
+                                modifier.modifier_name,
 
-                        modifier_name:
-                            modifier.modifier_name,
+                            modifier_cost:
+                                toNumberOrNullOutside(
+                                    modifier.modifier_cost,
+                                ),
 
-                        modifier_cost:
-                            toNumberOrNullOutside(
-                                modifier.modifier_cost,
-                            ),
-
-                        modifier_price:
-                            toNumberOrNullOutside(
-                                modifier.modifier_price,
-                            ),
-
-                        modifier_total:
-                            modifierTotal,
-                    });
-                },
-            );
-        }
+                            modifier_price:
+                                toNumberOrNullOutside(
+                                    modifier.modifier_price,
+                                ),
+                        }),
+                    ),
+            }));
 
 
-        if (modifierRecords.length > 0) {
-            await orderItemModifiersDataset.pushData(
-                modifierRecords,
-            );
-        }
+        // Write the parent order first, then its item rows.
+        await upsertSupabase(
+            'revel_orders',
+            [orderRecord],
+        );
+
+        await upsertSupabase(
+            'revel_order_items',
+            itemRecords,
+        );
 
 
         console.log(
@@ -3722,34 +3801,9 @@ const crawler =
             );
 
 
-            /*
-             * Store diagnostic failure record.
-             */
-            await Actor.pushData({
-                status:
-                    'master_failed',
-
-                location:
-                    targetStore,
-
-                report_date,
-
-                start_time,
-
-                end_time,
-
-                url:
-                    page
-                        ? page.url()
-                        : request.url,
-
-                error:
-                    error.message,
-
-                timestamp:
-                    new Date()
-                        .toISOString(),
-            });
+            console.error(
+                `Failed URL: ${page ? page.url() : request.url}`,
+            );
         },
     });
 
