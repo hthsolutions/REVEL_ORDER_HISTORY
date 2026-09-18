@@ -2640,6 +2640,86 @@ async function parseOrderPage(
 
             /*
              * ------------------------------------------------
+             * APPLIED DISCOUNT REASON
+             * ------------------------------------------------
+             *
+             * Revel renders item-level applied discounts in a
+             * table.applied_taxes table inside each order item.
+             * Extract all non-empty Reason values for this item.
+             * If multiple reasons exist, preserve them in one
+             * text field separated by " | ".
+             */
+
+            const getAppliedDiscountReason =
+                container => {
+
+                    const discountTables = [
+                        ...container.querySelectorAll(
+                            'table.applied_taxes',
+                        ),
+                    ];
+
+                    const reasons = [];
+
+                    for (const table of discountTables) {
+
+                        const rows = [
+                            ...table.querySelectorAll('tr'),
+                        ];
+
+                        if (rows.length < 2) {
+                            continue;
+                        }
+
+                        const headers = [
+                            ...rows[0].querySelectorAll('th'),
+                        ].map(
+                            th =>
+                                cleanValue(th.textContent)
+                                ?.toLowerCase()
+                                ?? null,
+                        );
+
+                        const reasonIndex =
+                            headers.findIndex(
+                                header =>
+                                    header === 'reason',
+                            );
+
+                        if (reasonIndex === -1) {
+                            continue;
+                        }
+
+                        for (const row of rows.slice(1)) {
+
+                            const cells = [
+                                ...row.querySelectorAll('td'),
+                            ];
+
+                            const reason =
+                                cleanValue(
+                                    cells[reasonIndex]
+                                        ?.textContent,
+                                );
+
+                            if (reason) {
+                                reasons.push(reason);
+                            }
+                        }
+                    }
+
+                    const uniqueReasons = [
+                        ...new Set(reasons),
+                    ];
+
+                    return uniqueReasons.length > 0
+                        ? uniqueReasons.join(' | ')
+                        : null;
+                };
+
+
+            /*
+             * ------------------------------------------------
              * ITEMS
              * ------------------------------------------------
              */
@@ -2840,6 +2920,11 @@ async function parseOrderPage(
                                         'Discount Total'
                                     ]
                                     ?? null,
+
+                                discount_reason:
+                                    getAppliedDiscountReason(
+                                        container,
+                                    ),
 
                                 modifiers,
                             };
@@ -3276,6 +3361,9 @@ async function processOrder(
 
                 discount_total:
                     toNumberOrNullOutside(item.discount_total),
+
+                discount_reason:
+                    item.discount_reason,
 
                 modifier_cost:
                     toNumberOrNullOutside(item.modifier_cost),
