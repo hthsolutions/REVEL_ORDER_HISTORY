@@ -2720,6 +2720,93 @@ async function parseOrderPage(
 
             /*
              * ------------------------------------------------
+             * ORDER-LEVEL APPLIED DISCOUNT REASON
+             * ------------------------------------------------
+             *
+             * Order-level applied discounts can use the same
+             * table.applied_taxes structure as item discounts.
+             * Only inspect tables that are NOT inside an
+             * individual div.order_item.item so an item-level
+             * reason cannot be assigned to the whole order.
+             *
+             * If multiple order-level reasons exist, preserve
+             * the unique values separated by " | ".
+             */
+
+            const getOrderAppliedDiscountReason = () => {
+
+                const discountTables = [
+                    ...document.querySelectorAll(
+                        'table.applied_taxes',
+                    ),
+                ].filter(
+                    table =>
+                        !table.closest(
+                            'div.order_item.item',
+                        ),
+                );
+
+                const reasons = [];
+
+                for (const table of discountTables) {
+
+                    const rows = [
+                        ...table.querySelectorAll('tr'),
+                    ];
+
+                    if (rows.length < 2) {
+                        continue;
+                    }
+
+                    const headers = [
+                        ...rows[0].querySelectorAll('th'),
+                    ].map(
+                        th =>
+                            cleanValue(th.textContent)
+                            ?.toLowerCase()
+                            ?? null,
+                    );
+
+                    const reasonIndex =
+                        headers.findIndex(
+                            header =>
+                                header === 'reason',
+                        );
+
+                    if (reasonIndex === -1) {
+                        continue;
+                    }
+
+                    for (const row of rows.slice(1)) {
+
+                        const cells = [
+                            ...row.querySelectorAll('td'),
+                        ];
+
+                        const reason =
+                            cleanValue(
+                                cells[reasonIndex]
+                                    ?.textContent,
+                            );
+
+                        if (reason) {
+                            reasons.push(reason);
+                        }
+                    }
+                }
+
+                const uniqueReasons = [
+                    ...new Set(reasons),
+                ];
+
+                return uniqueReasons.length > 0
+                    ? uniqueReasons.join(' | ')
+                    : null;
+            };
+
+
+            /*
+             * ------------------------------------------------
              * ITEMS
              * ------------------------------------------------
              */
@@ -3098,6 +3185,9 @@ async function parseOrderPage(
                 discount_amount:
                     toNumberOrNull(orderTotals['Discount Amount']),
 
+                discount_reason:
+                    getOrderAppliedDiscountReason(),
+
                 item_count:
                     items.length,
 
@@ -3260,6 +3350,9 @@ async function processOrder(
 
             discount_amount:
                 parsedOrder.discount_amount,
+
+            discount_reason:
+                parsedOrder.discount_reason,
 
             establishment_no:
                 parsedOrder.establishment_no,
