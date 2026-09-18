@@ -2164,6 +2164,158 @@ async function parseOrderPage(
 
             /*
              * ------------------------------------------------
+             * ORDER HISTORY - MAX CLOSED TIMESTAMP
+             * ------------------------------------------------
+             *
+             * An order can contain multiple order history
+             * blocks. Collect every Closed timestamp and
+             * return the chronologically latest value.
+             */
+
+            const getMaxClosedTimestamp = () => {
+
+                const historyContainers = [
+                    ...document.querySelectorAll(
+                        'div.order_history_item.order_history.item',
+                    ),
+                ];
+
+                const closedTimestamps = [];
+
+                for (const container of historyContainers) {
+
+                    const rows = [
+                        ...container.querySelectorAll(
+                            'table.order_history_table tr',
+                        ),
+                    ];
+
+                    for (const row of rows) {
+
+                        const cells = [
+                            ...row.querySelectorAll('td'),
+                        ];
+
+                        for (
+                            let i = 0;
+                            i < cells.length - 1;
+                            i += 1
+                        ) {
+
+                            const label =
+                                cleanValue(
+                                    cells[i].textContent,
+                                )
+                                    ?.replace(/:$/, '')
+                                    .trim()
+                                    .toLowerCase();
+
+                            if (label !== 'closed') {
+                                continue;
+                            }
+
+                            const value =
+                                cleanValue(
+                                    cells[i + 1].textContent,
+                                );
+
+                            if (value) {
+                                closedTimestamps.push(value);
+                            }
+                        }
+                    }
+                }
+
+                if (closedTimestamps.length === 0) {
+                    return null;
+                }
+
+                const parseTimestamp = value => {
+
+                    const match =
+                        value.match(
+                            /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i,
+                        );
+
+                    if (!match) {
+                        return null;
+                    }
+
+                    let [
+                        ,
+                        month,
+                        day,
+                        year,
+                        hour,
+                        minute,
+                        second,
+                        meridiem,
+                    ] = match;
+
+                    if (year.length === 2) {
+                        year = `20${year}`;
+                    }
+
+                    let hourNumber =
+                        Number(hour);
+
+                    meridiem =
+                        meridiem.toUpperCase();
+
+                    if (
+                        meridiem === 'AM'
+                        && hourNumber === 12
+                    ) {
+                        hourNumber = 0;
+                    }
+
+                    if (
+                        meridiem === 'PM'
+                        && hourNumber !== 12
+                    ) {
+                        hourNumber += 12;
+                    }
+
+                    return new Date(
+                        Number(year),
+                        Number(month) - 1,
+                        Number(day),
+                        hourNumber,
+                        Number(minute),
+                        Number(second),
+                    ).getTime();
+                };
+
+                const validClosedTimestamps =
+                    closedTimestamps
+                        .map(value => ({
+                            value,
+                            timestamp:
+                                parseTimestamp(value),
+                        }))
+                        .filter(
+                            entry =>
+                                entry.timestamp !== null
+                                && Number.isFinite(
+                                    entry.timestamp,
+                                ),
+                        );
+
+                if (validClosedTimestamps.length === 0) {
+                    return null;
+                }
+
+                validClosedTimestamps.sort(
+                    (a, b) =>
+                        b.timestamp - a.timestamp,
+                );
+
+                return validClosedTimestamps[0].value;
+            };
+
+
+            /*
+             * ------------------------------------------------
              * ORDER TOTALS TABLE
              * ------------------------------------------------
              */
@@ -2819,6 +2971,9 @@ async function parseOrderPage(
                         'Updated date',
                     ),
 
+                closed_date:
+                    getMaxClosedTimestamp(),
+
                 dining_option:
                     getPageDetail(
                         'Dining Option',
@@ -3008,6 +3163,11 @@ async function processOrder(
             created_date:
                 normalizeRevelTimestamp(
                     parsedOrder.created_date,
+                ),
+
+            closed_date:
+                normalizeRevelTimestamp(
+                    parsedOrder.closed_date,
                 ),
 
             dining_option:
