@@ -1706,8 +1706,8 @@ async function configureOrderHistoryFilters(page) {
     ];
 
     /*
-     * Revel renders the real checkbox <input> elements hidden.
-     * Therefore we only require them to be ATTACHED, never visible.
+     * Revel keeps the real checkbox <input> elements hidden even when
+     * the Filters panel is open. Only require the inputs to be attached.
      */
     for (const filter of desiredFilters) {
         const checkbox = page.locator(
@@ -1721,8 +1721,8 @@ async function configureOrderHistoryFilters(page) {
     }
 
     /*
-     * Set the hidden inputs directly and dispatch the events Revel
-     * would normally receive when a user changes the visible control.
+     * Set the hidden checkbox state directly and fire the same events
+     * Revel listens for when a user changes a filter.
      */
     const filterStates = await page.evaluate((filters) => {
         return filters.map((filter) => {
@@ -1754,9 +1754,12 @@ async function configureOrderHistoryFilters(page) {
                 before,
                 after: checkbox.checked,
                 desired: filter.checked,
+                changed: before !== filter.checked,
             };
         });
     }, desiredFilters);
+
+    let filtersChanged = false;
 
     for (const state of filterStates) {
         console.log(
@@ -1775,6 +1778,10 @@ async function configureOrderHistoryFilters(page) {
                 + `${state.after ? 'checked' : 'unchecked'}.`,
             );
         }
+
+        if (state.changed) {
+            filtersChanged = true;
+        }
     }
 
     console.log(
@@ -1782,53 +1789,101 @@ async function configureOrderHistoryFilters(page) {
     );
 
     /*
-     * Open the Filters panel so its visible Apply control can be used.
-     * Do not use checkbox visibility to decide whether the panel is open;
-     * the checkbox inputs remain hidden even while the panel is visible.
+     * If Revel already has the exact desired state, there is nothing to
+     * apply. In that case its Apply control is intentionally rendered as:
+     *
+     *   <div class="button button-update disabled">Apply</div>
+     *
+     * Trying to click it would only create an unnecessary failure.
      */
-    const filtersButton = page.getByText(
-        'Filters',
-        { exact: true },
-    ).first();
+    if (!filtersChanged) {
+        console.log(
+            'Order History filters already match desired state. '
+            + 'No filter Apply required.',
+        );
 
-    await filtersButton.waitFor({
-        state: 'visible',
-        timeout: 20_000,
-    });
+        return;
+    }
 
     console.log(
-        'Opening Order History Filters panel...',
+        'Order History filter state changed. Applying changes...',
     );
 
-    await filtersButton.click();
-    await page.waitForTimeout(300);
+    /*
+     * Revel's Apply control is a DIV, not a semantic <button>:
+     *
+     *   <div class="button button-update">Apply</div>
+     *
+     * Open the Filters panel only when the Apply control is not already
+     * visible. This avoids accidentally toggling an already-open panel.
+     */
+    const applyButton = page.locator(
+        'form#filter_form .actions .button.button-update',
+    ).first();
 
-    const applyButton = page.getByRole(
-        'button',
-        {
-            name: 'Apply',
-            exact: true,
-        },
-    ).last();
+    const applyVisible = await applyButton
+        .isVisible()
+        .catch(() => false);
+
+    if (!applyVisible) {
+        const filtersButton = page.getByText(
+            'Filters',
+            { exact: true },
+        ).first();
+
+        await filtersButton.waitFor({
+            state: 'visible',
+            timeout: 20_000,
+        });
+
+        console.log(
+            'Opening Order History Filters panel...',
+        );
+
+        await filtersButton.click();
+    }
 
     await applyButton.waitFor({
         state: 'visible',
         timeout: 20_000,
     });
 
+    /*
+     * Wait until Revel removes the disabled class. The control can be
+     * visible while disabled, so visibility alone is not sufficient.
+     */
+    await page.waitForFunction(
+        () => {
+            const element = document.querySelector(
+                'form#filter_form .actions .button.button-update',
+            );
+
+            return Boolean(
+                element
+                && !element.classList.contains('disabled'),
+            );
+        },
+        null,
+        {
+            timeout: 20_000,
+            polling: 200,
+        },
+    );
+
     console.log(
-        'Applying Order History filters...',
+        'Clicking Order History filter Apply...',
     );
 
     await applyButton.click();
 
     /*
-     * Wait for Revel to serialize the two required inclusion flags
-     * into its Order History state/hash. This also confirms Apply ran.
+     * Confirm Revel serialized the two required inclusion flags into its
+     * Order History state/hash after Apply.
      */
     await page.waitForFunction(
         () => {
             const decoded = decodeURIComponent(window.location.href);
+
             return (
                 decoded.includes('"show_opened":"1"')
                 && decoded.includes('"show_closed":"1"')
@@ -1851,7 +1906,6 @@ async function configureOrderHistoryFilters(page) {
         + 'Web Orders Only=OFF.',
     );
 }
-
 /*
  * ============================================================
  * COLLECT ORDER IDs
