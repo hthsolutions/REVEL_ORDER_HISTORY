@@ -1679,6 +1679,223 @@ async function setReportDate(
 
 /*
  * ============================================================
+ * ORDER HISTORY INCLUSION FILTERS
+ * ============================================================
+ *
+ * Explicitly enforce the Order History filter state so the
+ * extraction does not depend on Revel's remembered/default UI
+ * state from a previous session.
+ *
+ * Desired state:
+ *   Open                 = ON
+ *   Close                = ON
+ *   Search On Time Range = OFF
+ *   Web Orders Only      = OFF
+ */
+async function configureOrderHistoryFilters(page) {
+
+    console.log(
+        'Configuring Order History inclusion filters...',
+    );
+
+
+    const desiredFilters = [
+        {
+            name: 'show_opened',
+            label: 'Open',
+            checked: true,
+        },
+        {
+            name: 'show_closed',
+            label: 'Close',
+            checked: true,
+        },
+        {
+            name: 'search_on_time',
+            label: 'Search On Time Range',
+            checked: false,
+        },
+        {
+            name: 'weborder_only',
+            label: 'Web Orders Only',
+            checked: false,
+        },
+    ];
+
+
+    /*
+     * Open the Filters panel if the inclusion controls are not
+     * currently visible. Revel may keep the controls attached
+     * to the DOM even while the panel itself is collapsed.
+     */
+    const openCheckbox =
+        page.locator(
+            'input[type="checkbox"][name="show_opened"]',
+        ).first();
+
+
+    await openCheckbox.waitFor({
+        state: 'attached',
+        timeout: 20_000,
+    });
+
+
+    if (
+        !await openCheckbox
+            .isVisible()
+            .catch(() => false)
+    ) {
+
+        console.log(
+            'Opening Order History Filters panel...',
+        );
+
+
+        const filtersButton =
+            page.getByText(
+                'Filters',
+                { exact: true },
+            ).first();
+
+
+        await filtersButton.waitFor({
+            state: 'visible',
+            timeout: 20_000,
+        });
+
+
+        await filtersButton.click();
+
+
+        await openCheckbox.waitFor({
+            state: 'visible',
+            timeout: 20_000,
+        });
+    }
+
+
+    for (const filter of desiredFilters) {
+
+        const checkbox =
+            page.locator(
+                `input[type="checkbox"][name="${filter.name}"]`,
+            ).first();
+
+
+        await checkbox.waitFor({
+            state: 'visible',
+            timeout: 20_000,
+        });
+
+
+        const currentState =
+            await checkbox.isChecked();
+
+
+        console.log(
+            `${filter.label}: `
+            + `${currentState ? 'checked' : 'unchecked'} `
+            + `→ desired: `
+            + `${filter.checked ? 'checked' : 'unchecked'}`,
+        );
+
+
+        if (currentState !== filter.checked) {
+
+            if (filter.checked) {
+                await checkbox.check();
+            }
+            else {
+                await checkbox.uncheck();
+            }
+        }
+    }
+
+
+    /*
+     * Validate the state before applying it.
+     */
+    for (const filter of desiredFilters) {
+
+        const checkbox =
+            page.locator(
+                `input[type="checkbox"][name="${filter.name}"]`,
+            ).first();
+
+
+        const actualState =
+            await checkbox.isChecked();
+
+
+        if (actualState !== filter.checked) {
+            throw new Error(
+                `Order History filter validation failed: `
+                + `${filter.label}. Expected `
+                + `${filter.checked ? 'checked' : 'unchecked'}, `
+                + `received `
+                + `${actualState ? 'checked' : 'unchecked'}.`,
+            );
+        }
+    }
+
+
+    console.log(
+        'Order History inclusion states verified.',
+    );
+
+
+    /*
+     * Scope Apply to the visible filters form/panel when
+     * possible so another Apply button elsewhere on the page
+     * cannot be clicked accidentally.
+     */
+    const applyButton =
+        page.getByRole(
+            'button',
+            {
+                name: 'Apply',
+                exact: true,
+            },
+        )
+            .filter({ visible: true })
+            .first();
+
+
+    await applyButton.waitFor({
+        state: 'visible',
+        timeout: 20_000,
+    });
+
+
+    console.log(
+        'Applying Order History filters...',
+    );
+
+
+    await applyButton.click();
+
+
+    /*
+     * Give Revel's AJAX-backed order table time to refresh.
+     * The collector performs its own visibility checks next.
+     */
+    await page.waitForTimeout(
+        1500,
+    );
+
+
+    console.log(
+        'Order History filters applied successfully: '
+        + 'Open=ON, '
+        + 'Close=ON, '
+        + 'Search On Time Range=OFF, '
+        + 'Web Orders Only=OFF.',
+    );
+}
+
+
+/*
+ * ============================================================
  * COLLECT ORDER IDs
  * ============================================================
  */
@@ -3318,7 +3535,7 @@ async function processOrder(
 
         const orderRecord = {
             record_key:
-                `${targetStore}|${order.order_id}`,
+                `${targetStore}|${order.order_id}|${normalizeReportDate(report_date)}`,
 
             location:
                 targetStore,
@@ -3409,7 +3626,7 @@ async function processOrder(
         const itemRecords =
             parsedItems.map(item => ({
                 record_key:
-                    `${targetStore}|${order.order_id}|${item.item_index}`,
+                    `${targetStore}|${order.order_id}|${item.item_index}|${normalizeReportDate(report_date)}`,
 
                 location:
                     targetStore,
@@ -3932,6 +4149,17 @@ const crawler =
                 report_date,
                 start_time,
                 end_time,
+            );
+
+
+            /*
+             * ------------------------------------------------
+             * ORDER HISTORY FILTERS
+             * ------------------------------------------------
+             */
+
+            await configureOrderHistoryFilters(
+                page,
             );
 
 
