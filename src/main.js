@@ -1698,191 +1698,150 @@ async function configureOrderHistoryFilters(page) {
         'Configuring Order History inclusion filters...',
     );
 
-
     const desiredFilters = [
-        {
-            name: 'show_opened',
-            label: 'Open',
-            checked: true,
-        },
-        {
-            name: 'show_closed',
-            label: 'Close',
-            checked: true,
-        },
-        {
-            name: 'search_on_time',
-            label: 'Search On Time Range',
-            checked: false,
-        },
-        {
-            name: 'weborder_only',
-            label: 'Web Orders Only',
-            checked: false,
-        },
+        { name: 'show_opened', label: 'Open', checked: true },
+        { name: 'show_closed', label: 'Close', checked: true },
+        { name: 'search_on_time', label: 'Search On Time Range', checked: false },
+        { name: 'weborder_only', label: 'Web Orders Only', checked: false },
     ];
 
-
     /*
-     * Open the Filters panel if the inclusion controls are not
-     * currently visible. Revel may keep the controls attached
-     * to the DOM even while the panel itself is collapsed.
+     * Revel renders the real checkbox <input> elements hidden.
+     * Therefore we only require them to be ATTACHED, never visible.
      */
-    const openCheckbox =
-        page.locator(
-            'input[type="checkbox"][name="show_opened"]',
+    for (const filter of desiredFilters) {
+        const checkbox = page.locator(
+            `input[type="checkbox"][name="${filter.name}"]`,
         ).first();
 
-
-    await openCheckbox.waitFor({
-        state: 'attached',
-        timeout: 20_000,
-    });
-
-
-    if (
-        !await openCheckbox
-            .isVisible()
-            .catch(() => false)
-    ) {
-
-        console.log(
-            'Opening Order History Filters panel...',
-        );
-
-
-        const filtersButton =
-            page.getByText(
-                'Filters',
-                { exact: true },
-            ).first();
-
-
-        await filtersButton.waitFor({
-            state: 'visible',
-            timeout: 20_000,
-        });
-
-
-        await filtersButton.click();
-
-
-        await openCheckbox.waitFor({
-            state: 'visible',
-            timeout: 20_000,
-        });
-    }
-
-
-    for (const filter of desiredFilters) {
-
-        const checkbox =
-            page.locator(
-                `input[type="checkbox"][name="${filter.name}"]`,
-            ).first();
-
-
         await checkbox.waitFor({
-            state: 'visible',
+            state: 'attached',
             timeout: 20_000,
         });
-
-
-        const currentState =
-            await checkbox.isChecked();
-
-
-        console.log(
-            `${filter.label}: `
-            + `${currentState ? 'checked' : 'unchecked'} `
-            + `→ desired: `
-            + `${filter.checked ? 'checked' : 'unchecked'}`,
-        );
-
-
-        if (currentState !== filter.checked) {
-
-            if (filter.checked) {
-                await checkbox.check();
-            }
-            else {
-                await checkbox.uncheck();
-            }
-        }
     }
-
 
     /*
-     * Validate the state before applying it.
+     * Set the hidden inputs directly and dispatch the events Revel
+     * would normally receive when a user changes the visible control.
      */
-    for (const filter of desiredFilters) {
-
-        const checkbox =
-            page.locator(
+    const filterStates = await page.evaluate((filters) => {
+        return filters.map((filter) => {
+            const checkbox = document.querySelector(
                 `input[type="checkbox"][name="${filter.name}"]`,
-            ).first();
+            );
 
+            if (!checkbox) {
+                throw new Error(
+                    `Could not locate Order History filter: ${filter.name}`,
+                );
+            }
 
-        const actualState =
-            await checkbox.isChecked();
+            const before = checkbox.checked;
 
+            if (before !== filter.checked) {
+                checkbox.checked = filter.checked;
+                checkbox.dispatchEvent(
+                    new Event('input', { bubbles: true }),
+                );
+                checkbox.dispatchEvent(
+                    new Event('change', { bubbles: true }),
+                );
+            }
 
-        if (actualState !== filter.checked) {
+            return {
+                name: filter.name,
+                label: filter.label,
+                before,
+                after: checkbox.checked,
+                desired: filter.checked,
+            };
+        });
+    }, desiredFilters);
+
+    for (const state of filterStates) {
+        console.log(
+            `${state.label}: `
+            + `${state.before ? 'checked' : 'unchecked'} `
+            + `→ ${state.after ? 'checked' : 'unchecked'} `
+            + `(desired: ${state.desired ? 'checked' : 'unchecked'})`,
+        );
+
+        if (state.after !== state.desired) {
             throw new Error(
                 `Order History filter validation failed: `
-                + `${filter.label}. Expected `
-                + `${filter.checked ? 'checked' : 'unchecked'}, `
+                + `${state.label}. Expected `
+                + `${state.desired ? 'checked' : 'unchecked'}, `
                 + `received `
-                + `${actualState ? 'checked' : 'unchecked'}.`,
+                + `${state.after ? 'checked' : 'unchecked'}.`,
             );
         }
     }
-
 
     console.log(
         'Order History inclusion states verified.',
     );
 
-
     /*
-     * Scope Apply to the visible filters form/panel when
-     * possible so another Apply button elsewhere on the page
-     * cannot be clicked accidentally.
+     * Open the Filters panel so its visible Apply control can be used.
+     * Do not use checkbox visibility to decide whether the panel is open;
+     * the checkbox inputs remain hidden even while the panel is visible.
      */
-    const applyButton =
-        page.getByRole(
-            'button',
-            {
-                name: 'Apply',
-                exact: true,
-            },
-        )
-            .filter({ visible: true })
-            .first();
+    const filtersButton = page.getByText(
+        'Filters',
+        { exact: true },
+    ).first();
 
+    await filtersButton.waitFor({
+        state: 'visible',
+        timeout: 20_000,
+    });
+
+    console.log(
+        'Opening Order History Filters panel...',
+    );
+
+    await filtersButton.click();
+    await page.waitForTimeout(300);
+
+    const applyButton = page.getByRole(
+        'button',
+        {
+            name: 'Apply',
+            exact: true,
+        },
+    ).last();
 
     await applyButton.waitFor({
         state: 'visible',
         timeout: 20_000,
     });
 
-
     console.log(
         'Applying Order History filters...',
     );
 
-
     await applyButton.click();
 
-
     /*
-     * Give Revel's AJAX-backed order table time to refresh.
-     * The collector performs its own visibility checks next.
+     * Wait for Revel to serialize the two required inclusion flags
+     * into its Order History state/hash. This also confirms Apply ran.
      */
-    await page.waitForTimeout(
-        1500,
+    await page.waitForFunction(
+        () => {
+            const decoded = decodeURIComponent(window.location.href);
+            return (
+                decoded.includes('"show_opened":"1"')
+                && decoded.includes('"show_closed":"1"')
+            );
+        },
+        null,
+        {
+            timeout: 30_000,
+            polling: 250,
+        },
     );
 
+    await page.waitForTimeout(1000);
 
     console.log(
         'Order History filters applied successfully: '
@@ -1892,7 +1851,6 @@ async function configureOrderHistoryFilters(page) {
         + 'Web Orders Only=OFF.',
     );
 }
-
 
 /*
  * ============================================================
